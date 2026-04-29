@@ -49,18 +49,27 @@ async function handleWebhook(req, res) {
 
     const text = (message.text || message.body || '').toLowerCase();
 
+    // 👇 COLE AQUI (logo abaixo da linha 50)
+if (text.includes('oi') || text.includes('ola')) {
+  const reply = "Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
+
+  res.set('Content-Type', 'text/xml');
+  return res.send(`
+    <Response>
+      <Message>${reply}</Message>
+    </Response>
+  `);
+}
+
     if (text.includes('saldo')) {
   const { start, end } = getMonthRange();
 
-  
-
   const summary = await getTransactionSummary(message.userId, start, end);
 
-const format = (v) => formatCurrencyBR(Number(v || 0));
+  const format = (v) => formatCurrencyBR(Number(v || 0));
+  const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
 
-const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
-
-const reply = `
+  const reply = `
 💰 *Resumo do mês*
 
 Receitas: ${format(summary.totalIncome)}
@@ -75,6 +84,8 @@ Saldo: ${format(summary.balance)} ${saldoEmoji}
     </Response>
   `);
 }
+    
+// 📊 ANÁLISE
 if (text.includes('analise') || text.includes('análise')) {
   const { start, end } = getMonthRange();
 
@@ -114,19 +125,16 @@ if (text.includes('analise') || text.includes('análise')) {
   `);
 }
 
- const msg = text.toLowerCase();
+// ❗ FALLBACK (IMPORTANTE)
+const reply = "Não entendi 🤔\n\nTente algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
 
-// 👇 TRATA SAUDAÇÃO PRIMEIRO
-if (msg.includes('oi') || msg.includes('ola')) {
-  const reply = "Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
-
-  res.set('Content-Type', 'text/xml');
-  return res.send(`
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `);
-}
+res.set('Content-Type', 'text/xml');
+return res.send(`
+  <Response>
+    <Message>${reply}</Message>
+  </Response>
+`);
+    
 
 // 👇 DEPOIS tenta entender finanças
 const parsed = await parseFinanceMessage(text, message.userId);
