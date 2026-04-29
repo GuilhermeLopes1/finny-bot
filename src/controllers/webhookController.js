@@ -40,7 +40,7 @@ const PROVIDER = process.env.WHATSAPP_PROVIDER || 'twilio';
  * POST /webhook
  * Entry point for all incoming WhatsApp messages
  */
-const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
+const { parseFinanceMessage } = require('../../utils/parseFinanceMessage');
 
 async function handleWebhook(req, res) {
   try {
