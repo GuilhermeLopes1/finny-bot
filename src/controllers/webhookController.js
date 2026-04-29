@@ -118,7 +118,14 @@ if (text.includes('analise') || text.includes('análise')) {
 
 // 👇 TRATA SAUDAÇÃO PRIMEIRO
 if (msg.includes('oi') || msg.includes('ola')) {
-  return "Olá! 👋 Sou o FinnyBot. Me diga algo como:\n\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
+  const reply = "Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
+
+  res.set('Content-Type', 'text/xml');
+  return res.send(`
+    <Response>
+      <Message>${reply}</Message>
+    </Response>
+  `);
 }
 
 // 👇 DEPOIS tenta entender finanças
