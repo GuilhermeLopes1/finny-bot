@@ -10,6 +10,7 @@ const morgan = require('morgan');
 const cors = require('cors');
 require('./config/firebase');
 const { handleWebhook, handleHealthCheck } = require('./controllers/webhookController');
+
 const { rateLimiter } = require('./middleware/rateLimiter');
 const logger = require('./utils/logger');
 
