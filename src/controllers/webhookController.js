@@ -114,9 +114,17 @@ if (text.includes('analise') || text.includes('análise')) {
   `);
 }
 
-    const parsed = await parseFinanceMessage(text, message.userId);
+ const msg = text.toLowerCase();
 
-    let reply = 'Não entendi 🤔';
+// 👇 TRATA SAUDAÇÃO PRIMEIRO
+if (msg.includes('oi') || msg.includes('ola')) {
+  return "Olá! 👋 Sou o FinnyBot. Me diga algo como:\n\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
+}
+
+// 👇 DEPOIS tenta entender finanças
+const parsed = await parseFinanceMessage(text, message.userId);
+
+let reply = 'Não entendi 🤔';
 
 if (parsed.type === 'expense' || parsed.type === 'income') {
 
