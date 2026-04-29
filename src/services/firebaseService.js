@@ -1,21 +1,19 @@
-const express = require('express');
-const bodyParser = require('body-parser');
-require('dotenv').config();
+const admin = require('firebase-admin');
 
-const { handleWebhook } = require('./controllers/webhookController');
+if (!admin.apps.length) {
+  admin.initializeApp({
+    credential: admin.credential.applicationDefault()
+  });
+}
 
-const app = express();
-app.use(bodyParser.urlencoded({ extended: false }));
-app.use(bodyParser.json());
+const db = admin.firestore();
 
-app.get('/', (req, res) => {
-  res.send('🚀 FinnyBot online');
-});
+async function saveTransaction(userId, transaction) {
+  await db.collection("users").doc(userId).set({
+    transactions: admin.firestore.FieldValue.arrayUnion(transaction)
+  }, { merge: true });
 
-app.post('/webhook', handleWebhook);
+  console.log("💾 Transação salva:", transaction);
+}
 
-const PORT = process.env.PORT || 3000;
-
-app.listen(PORT, () => {
-  console.log(`🚀 Server rodando na porta ${PORT}`);
-});
+module.exports = { saveTransaction };
