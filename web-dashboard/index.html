@@ -1,0 +1,280 @@
+<!DOCTYPE html>
+<html lang="pt-BR">
+<head><base href="https://d16ilfvy4mv02r.cloudfront.net/workspaces/IGn8VTsXKAYxh9lZqMKYQ6FPc2xqS8ll/981d5f6d-3c99-4562-871e-d0142ebb126c/files/">
+  <meta charset="UTF-8" />
+  <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+  <title>Finny — Painel Financeiro</title>
+  <script src="https://cdn.tailwindcss.com"></script>
+  <script src="https://cdn.jsdelivr.net/npm/chart.js"></script>
+  <script type="module">
+    import { initializeApp } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-app.js";
+    import {
+      getFirestore, collection, query, where, orderBy, getDocs, onSnapshot, Timestamp
+    } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-firestore.js";
+    import {
+      getAuth, signInWithEmailAndPassword, onAuthStateChanged, signOut
+    } from "https://www.gstatic.com/firebasejs/10.7.0/firebase-auth.js";
+
+    // ── Firebase Config ──────────────────────────────
+    const firebaseConfig = {
+      apiKey: "YOUR_API_KEY",
+      authDomain: "YOUR_PROJECT.firebaseapp.com",
+      projectId: "YOUR_PROJECT_ID",
+    };
+
+    const app = initializeApp(firebaseConfig);
+    const db = getFirestore(app);
+    const auth = getAuth(app);
+
+    // ── Auth ─────────────────────────────────────────
+    const loginSection = document.getElementById('login-section');
+    const dashboardSection = document.getElementById('dashboard-section');
+
+    onAuthStateChanged(auth, async (user) => {
+      if (user) {
+        loginSection.classList.add('hidden');
+        dashboardSection.classList.remove('hidden');
+        document.getElementById('user-email').textContent = user.email;
+        await loadDashboard(user.uid);
+      } else {
+        loginSection.classList.remove('hidden');
+        dashboardSection.classList.add('hidden');
+      }
+    });
+
+    window.login = async () => {
+      const email = document.getElementById('email').value;
+      const password = document.getElementById('password').value;
+      const err = document.getElementById('login-error');
+      try {
+        await signInWithEmailAndPassword(auth, email, password);
+        err.classList.add('hidden');
+      } catch (e) {
+        err.textContent = 'Email ou senha incorretos.';
+        err.classList.remove('hidden');
+      }
+    };
+
+    window.logout = () => signOut(auth);
+
+    // ── Dashboard ────────────────────────────────────
+    async function loadDashboard(userId) {
+      const now = new Date();
+      const startOfMonth = new Date(now.getFullYear(), now.getMonth(), 1);
+      const endOfMonth = new Date(now.getFullYear(), now.getMonth() + 1, 0, 23, 59, 59);
+
+      const txRef = collection(db, `users/${userId}/transactions`);
+      const q = query(
+        txRef,
+        where('date', '>=', Timestamp.fromDate(startOfMonth)),
+        where('date', '<=', Timestamp.fromDate(endOfMonth)),
+        orderBy('date', 'desc')
+      );
+
+      const snapshot = await getDocs(q);
+      const transactions = snapshot.docs.map(d => ({ id: d.id, ...d.data() }));
+
+      renderStats(transactions);
+      renderCategoryChart(transactions);
+      renderTransactionList(transactions);
+    }
+
+    function renderStats(transactions) {
+      let income = 0, expenses = 0;
+      transactions.forEach(t => {
+        if (t.type === 'income') income += t.amount;
+        else expenses += t.amount;
+      });
+      const balance = income - expenses;
+
+      document.getElementById('stat-income').textContent = formatBRL(income);
+      document.getElementById('stat-expenses').textContent = formatBRL(expenses);
+      document.getElementById('stat-balance').textContent = formatBRL(balance);
+      document.getElementById('stat-balance').className =
+        balance >= 0 ? 'text-3xl font-bold text-emerald-600' : 'text-3xl font-bold text-red-600';
+      document.getElementById('stat-count').textContent = `${transactions.length} transações`;
+    }
+
+    function renderCategoryChart(transactions) {
+      const categories = {};
+      transactions.filter(t => t.type === 'expense').forEach(t => {
+        categories[t.category] = (categories[t.category] || 0) + t.amount;
+      });
+
+      const labels = Object.keys(categories);
+      const data = Object.values(categories);
+      const colors = [
+        '#6366f1','#f59e0b','#10b981','#ef4444','#3b82f6',
+        '#8b5cf6','#f97316','#14b8a6','#ec4899','#84cc16'
+      ];
+
+      const ctx = document.getElementById('category-chart').getContext('2d');
+      if (window._categoryChart) window._categoryChart.destroy();
+      window._categoryChart = new Chart(ctx, {
+        type: 'doughnut',
+        data: { labels, datasets: [{ data, backgroundColor: colors, borderWidth: 2 }] },
+        options: {
+          responsive: true,
+          plugins: {
+            legend: { position: 'bottom' },
+            tooltip: {
+              callbacks: {
+                label: ctx => ` ${ctx.label}: ${formatBRL(ctx.parsed)}`
+              }
+            }
+          }
+        }
+      });
+    }
+
+    function renderTransactionList(transactions) {
+      const list = document.getElementById('transaction-list');
+      if (transactions.length === 0) {
+        list.innerHTML = '<p class="text-gray-400 text-center py-8">Nenhuma transação este mês.</p>';
+        return;
+      }
+
+      list.innerHTML = transactions.slice(0, 20).map(t => {
+        const isExpense = t.type === 'expense';
+        const dateStr = t.date?.toDate ? formatDate(t.date.toDate()) : '—';
+        return `
+          <div class="flex items-center justify-between p-3 rounded-lg bg-gray-50 hover:bg-gray-100 transition">
+            <div class="flex items-center gap-3">
+              <span class="text-xl">${getCategoryEmoji(t.category)}</span>
+              <div>
+                <p class="font-medium text-gray-800 capitalize">${t.description || t.category}</p>
+                <p class="text-xs text-gray-400">${t.category} • ${dateStr}</p>
+              </div>
+            </div>
+            <span class="font-bold ${isExpense ? 'text-red-500' : 'text-emerald-600'}">
+              ${isExpense ? '-' : '+'}${formatBRL(t.amount)}
+            </span>
+          </div>
+        `;
+      }).join('');
+    }
+
+    function formatBRL(value) {
+      return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value || 0);
+    }
+
+    function formatDate(date) {
+      return new Intl.DateTimeFormat('pt-BR', { day: '2-digit', month: '2-digit' }).format(date);
+    }
+
+    function getCategoryEmoji(cat) {
+      const map = {
+        alimentação: '🍽️', transporte: '🚗', moradia: '🏠', saúde: '💊',
+        educação: '📚', lazer: '🎮', roupas: '👕', tecnologia: '💻',
+        assinaturas: '📺', salário: '💰', freelance: '💼', outros: '📦'
+      };
+      return map[cat] || '💳';
+    }
+  </script>
+</head>
+<body class="bg-gray-100 min-h-screen font-sans">
+
+  <!-- ── Login ─────────────────────────────── -->
+  <div id="login-section" class="min-h-screen flex items-center justify-center">
+    <div class="bg-white rounded-2xl shadow-lg p-8 w-full max-w-sm">
+      <div class="text-center mb-6">
+        <span class="text-5xl">🤖</span>
+        <h1 class="text-2xl font-bold text-gray-800 mt-2">Finny</h1>
+        <p class="text-gray-500 text-sm">Seu assistente financeiro</p>
+      </div>
+      <div class="space-y-4">
+        <input id="email" type="email" placeholder="E-mail"
+          class="w-full border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <input id="password" type="password" placeholder="Senha"
+          class="w-full border border-gray-200 rounded-xl px-4 py-3 focus:outline-none focus:ring-2 focus:ring-indigo-400" />
+        <p id="login-error" class="text-red-500 text-sm hidden"></p>
+        <button onclick="login()"
+          class="w-full bg-indigo-600 hover:bg-indigo-700 text-white font-semibold py-3 rounded-xl transition">
+          Entrar
+        </button>
+      </div>
+    </div>
+  </div>
+
+  <!-- ── Dashboard ─────────────────────────── -->
+  <div id="dashboard-section" class="hidden">
+    <!-- Header -->
+    <header class="bg-white shadow-sm sticky top-0 z-10">
+      <div class="max-w-5xl mx-auto px-4 py-4 flex items-center justify-between">
+        <div class="flex items-center gap-2">
+          <span class="text-2xl">🤖</span>
+          <span class="text-xl font-bold text-indigo-600">Finny</span>
+        </div>
+        <div class="flex items-center gap-4">
+          <span id="user-email" class="text-gray-500 text-sm hidden md:block"></span>
+          <button onclick="logout()"
+            class="text-sm text-gray-500 hover:text-red-500 border border-gray-200 px-3 py-1.5 rounded-lg transition">
+            Sair
+          </button>
+        </div>
+      </div>
+    </header>
+
+    <main class="max-w-5xl mx-auto px-4 py-6 space-y-6">
+
+      <!-- Month label -->
+      <div class="flex items-center justify-between">
+        <h2 class="text-2xl font-bold text-gray-800">Painel do Mês</h2>
+        <span id="month-label" class="text-gray-500 text-sm bg-white px-3 py-1 rounded-full border"></span>
+      </div>
+
+      <!-- Stats Cards -->
+      <div class="grid grid-cols-2 md:grid-cols-4 gap-4">
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-emerald-100">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Receitas</p>
+          <p id="stat-income" class="text-2xl font-bold text-emerald-600">—</p>
+        </div>
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-red-100">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Gastos</p>
+          <p id="stat-expenses" class="text-2xl font-bold text-red-500">—</p>
+        </div>
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-indigo-100">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Saldo</p>
+          <p id="stat-balance" class="text-3xl font-bold text-indigo-600">—</p>
+        </div>
+        <div class="bg-white rounded-2xl p-4 shadow-sm border border-gray-100">
+          <p class="text-xs text-gray-400 uppercase tracking-wide mb-1">Total</p>
+          <p id="stat-count" class="text-lg font-semibold text-gray-700">—</p>
+        </div>
+      </div>
+
+      <!-- Chart + List -->
+      <div class="grid md:grid-cols-2 gap-6">
+        <!-- Doughnut chart -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm">
+          <h3 class="text-base font-semibold text-gray-700 mb-4">Gastos por Categoria</h3>
+          <canvas id="category-chart" height="250"></canvas>
+        </div>
+
+        <!-- Recent Transactions -->
+        <div class="bg-white rounded-2xl p-5 shadow-sm">
+          <h3 class="text-base font-semibold text-gray-700 mb-4">Últimas Transações</h3>
+          <div id="transaction-list" class="space-y-2 max-h-72 overflow-y-auto pr-1"></div>
+        </div>
+      </div>
+
+      <!-- WhatsApp CTA -->
+      <div class="bg-gradient-to-r from-green-500 to-emerald-600 rounded-2xl p-6 text-white flex items-center justify-between">
+        <div>
+          <h3 class="text-lg font-bold">Gerencie tudo pelo WhatsApp</h3>
+          <p class="text-emerald-100 text-sm mt-1">Envie mensagens de voz ou texto para o Finny registrar tudo!</p>
+        </div>
+        <span class="text-5xl">📱</span>
+      </div>
+
+    </main>
+  </div>
+
+  <script>
+    // Set current month label
+    const monthLabel = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(new Date());
+    const el = document.getElementById('month-label');
+    if (el) el.textContent = monthLabel.charAt(0).toUpperCase() + monthLabel.slice(1);
+  </script>
+</body>
+</html>
