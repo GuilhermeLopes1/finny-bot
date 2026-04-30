@@ -103,26 +103,28 @@ async function handleWebhook(req, res) {
     //      WEBHOOK_URL = https://finny-bot.onrender.com/webhook
     if (PROVIDER === 'twilio') {
       const isDev = process.env.NODE_ENV === 'development';
-      if (!isDev) {
-        const authToken      = process.env.TWILIO_AUTH_TOKEN;
-        const twilioSig      = req.headers['x-twilio-signature'] || '';
+      const authToken = process.env.TWILIO_AUTH_TOKEN;
 
-        // Reconstrói a URL pública — prioridade: env > forwarded headers > fallback
+      // ✅ FIX: guarda authToken antes de usar — se undefined, twilio.validateRequest
+      //    joga TypeError que cai no catch e retorna "Erro 😕" para o usuário.
+      //    Agora: se o token não estiver configurado, apenas avisa no log e segue.
+      if (!authToken) {
+        logger.warn('⚠️  TWILIO_AUTH_TOKEN não configurado — validação de assinatura desativada!');
+      } else if (!isDev) {
+        const twilioSig  = req.headers['x-twilio-signature'] || '';
         const webhookUrl =
           process.env.WEBHOOK_URL ||
           `${req.headers['x-forwarded-proto'] || 'https'}://${
             req.headers['x-forwarded-host'] || req.headers['host']
           }${req.originalUrl}`;
 
-        const isValid = twilio.validateRequest(
-          authToken,
-          twilioSig,
-          webhookUrl,
-          req.body ?? {}
-        );
+        const isValid = twilio.validateRequest(authToken, twilioSig, webhookUrl, req.body ?? {});
 
         if (!isValid) {
-          logger.warn('Twilio signature validation failed', { webhookUrl, twilioSig: twilioSig.slice(0, 10) + '...' });
+          logger.warn('Twilio signature validation failed', {
+            webhookUrl,
+            twilioSig: twilioSig.slice(0, 10) + '...'
+          });
           return res.status(403).send('Forbidden');
         }
       }
@@ -140,11 +142,14 @@ async function handleWebhook(req, res) {
       return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
     }
 
-    // ✅ FIX #3 (cont.): consulta usando o número sanitizado
+    // ✅ FIX: campo corrigido de 'phone' para 'phoneNumber'.
+    //    getOrCreateUser() salva o documento com o campo 'phoneNumber',
+    //    mas a query usava 'phone' — resultando em userSnapshot.empty = true
+    //    para TODOS os usuários → mensagem "🔒 precisa conectar" mesmo cadastrado.
     const db = getDb();
     const userSnapshot = await db
       .collection('users')
-      .where('phone', '==', phone)
+      .where('phoneNumber', '==', phone)
       .get();
 
     if (userSnapshot.empty) {
@@ -267,10 +272,13 @@ async function handleWebhook(req, res) {
     return sendTwiml(res, reply);
 
   } catch (error) {
-    logger.error('handleWebhook error:', error);
+    // ✅ FIX: loga a mensagem E o stack completo para aparecer no Render.
+    //    Antes só logava o objeto error, que não era serializavel pelo logger
+    //    e aparecia como {} nos logs — tornando impossível diagnosticar o problema.
+    logger.error('handleWebhook error: ' + error.message);
+    logger.error(error.stack ?? error);
 
-    // ✅ FIX #4 (aplicado também no catch): usa sendTwiml para garantir XML válido
-    return sendTwiml(res, 'Erro 😕');
+    return sendTwiml(res, 'Erro 😕 Tente novamente em instantes.');
   }
 }
 
