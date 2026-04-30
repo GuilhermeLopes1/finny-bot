@@ -49,7 +49,7 @@ async function handleWebhook(req, res) {
 
     const userSnapshot = await db
   .collection('users')
-  .where('phone', '==', userId)
+  .where('phone', '==', message.userID)
   .get();
 
 if (userSnapshot.empty) {
