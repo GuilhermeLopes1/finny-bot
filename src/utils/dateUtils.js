@@ -1,7 +1,7 @@
 
 /**
  * Date utilities with Brazilian Portuguese support
- * âœ… FIX: all ranges use UTC boundaries to match ISO strings saved in Firestore
+ * ✅ FIX: all ranges use UTC boundaries to match ISO strings saved in Firestore
  * Brazil = UTC-3, so server-side "local time" ranges would miss transactions
  * saved at certain hours. Using UTC month boundaries is consistent and safe.
  */
@@ -17,7 +17,7 @@ function getTodayRange() {
 }
 
 /**
- * Get start and end of current week (Monâ€“Sun) in UTC
+ * Get start and end of current week (Mon–Sun) in UTC
  */
 function getWeekRange() {
   const now = new Date();
@@ -34,7 +34,7 @@ function getWeekRange() {
 
 /**
  * Get start and end of current month in UTC
- * âœ… FIX: uses UTC methods â€” avoids UTC vs local timezone mismatch
+ * ✅ FIX: uses UTC methods — avoids UTC vs local timezone mismatch
  */
 function getMonthRange() {
   const now = new Date();
@@ -68,8 +68,8 @@ function parseDateReference(text) {
 
   if (/hoje|agora/.test(t))                           return getTodayRange();
   if (/essa semana|esta semana|semana/.test(t))        return getWeekRange();
-  if (/esse mÃªs|este mÃªs|mÃªs/.test(t))                return getMonthRange();
-  if (/mÃªs passado|Ãºltimo mÃªs/.test(t))               return getLastMonthRange();
+  if (/esse mês|este mês|mês/.test(t))                return getMonthRange();
+  if (/mês passado|último mês/.test(t))               return getLastMonthRange();
   if (/ontem/.test(t)) {
     const now = new Date();
     const y   = now.getUTCFullYear();
