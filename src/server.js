@@ -5,8 +5,7 @@
 
 require('dotenv').config();
 
-const { handleRegisterUser } = require('./controllers/webhookController');
-app.post('/register', handleRegisterUser);
+
 
 const express = require('express');
 const morgan = require('morgan');
@@ -25,6 +24,8 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize Firebase
 
+const { handleRegisterUser } = require('./controllers/webhookController');
+app.post('/register', handleRegisterUser);
 
 // ─────────────────────────────────────────────
 // MIDDLEWARE
