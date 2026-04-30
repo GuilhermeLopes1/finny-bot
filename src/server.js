@@ -24,9 +24,6 @@ const PORT = process.env.PORT || 3000;
 
 // Initialize Firebase
 
-const { handleRegisterUser } = require('./controllers/webhookController');
-app.post('/register', handleRegisterUser);
-
 // ─────────────────────────────────────────────
 // MIDDLEWARE
 // ─────────────────────────────────────────────
@@ -42,6 +39,8 @@ app.use('/webhook', rateLimiter);
 // ─────────────────────────────────────────────
 // ROUTES
 // ─────────────────────────────────────────────
+const { handleRegisterUser } = require('./controllers/webhookController');
+app.post('/register', handleRegisterUser);
 
 /**
  * Health check
