@@ -1576,7 +1576,7 @@ function renderTransactions(){
 
     return `
       <tr style="opacity:${isPaid?1:.7}">
-        <td><strong>${escHtml(t.description || t.desc || '—')}</strong></td>
+        <td><strong>${escHtml(t.description || '—')}</strong></td>
         <td>${cat.emoji} ${escHtml(cat.name)}</td>
         <td style="font-size:12px">${acct}</td>
         <td>${fmtDate(t.date)}</td>
@@ -1588,7 +1588,7 @@ function renderTransactions(){
           ${t.type==='income'?'+':'-'}${fmtBRL(t.amount)}
         </td>
         <td><button class="icon-btn" onclick="deleteTransaction('${t.id}')">🗑️</button></td>
-                <td><button class="icon-btn" onclick="abrirEdicao('${t.id}', '${escHtml(t.description||t.desc||'')}', ${t.amount}, '${escHtml(t.category||'')}', '${t.type}')">✏️</button></td>
+        <td><button onclick="abrirEdicao('${tx.id}', '${tx.description}', ${tx.amount}, '${tx.category}', '${tx.type}')"><button onclick="abrirEdicao('${tx.id}', '${tx.description}', ${tx.amount}, '${tx.category}', '${tx.type}')">✏️ Editar</button>️ Editar</button></td>
       </tr>
     `;
   }).join('');
@@ -1631,26 +1631,19 @@ function fecharEdicao() {
   editandoId = null;
 }
 
-function salvarEdicao() {
+async function salvarEdicao() {
   if (!editandoId) return;
-  const idx = state.transactions.findIndex(t => t.id === editandoId);
-  if (idx >= 0) {
-    const novoDesc = document.getElementById("edit-desc").value;
-    state.transactions[idx] = {
-      ...state.transactions[idx],
-      desc: novoDesc,
-      description: novoDesc,
-      amount: parseFloat(document.getElementById("edit-valor").value),
-      category: document.getElementById("edit-categoria").value,
-      type: document.getElementById("edit-tipo").value,
-    };
-  }
-  save();
+  const userId = auth.currentUser.uid;
+  await updateTransaction(userId, editandoId, {
+    description: document.getElementById("edit-desc").value,
+    amount: parseFloat(document.getElementById("edit-valor").value),
+    category: document.getElementById("edit-categoria").value,
+    type: document.getElementById("edit-tipo").value,
+  });
   fecharEdicao();
-  renderTransactions();
-  if (state.currentPage === 'dashboard') renderDashboard();
-  toast('Transação atualizada! ✏️');
+  carregarTransacoes(); // ← chame sua função que recarrega a lista
 }
+
 function toggleTxStatus(id){
   const t=state.transactions.find(x=>x.id===id);
   if(!t)return;
@@ -1697,7 +1690,7 @@ function saveTransaction(){
   if(!date){toast('Informe a data.');return;}
   const lim=state.settings.txLimit;
   if(lim>0&&!isPremium()&&state.transactions.length>=lim){openUpgradeModal();toast('Limite atingido. Faça upgrade para Pro!');return;}
-    const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,status:'paid'};
+  const tx={id:uid(),desc,amount,date,type:state.txType,category:cat,bankId,cardId,status:'paid'};
   state.transactions.push(tx);
   if(cardId&&state.txType==='expense'){const c=state.cards.find(c=>c.id===cardId);if(c)c.used=(c.used||0)+amount;}
   save();closeModal('modal-transaction');toast('Transação adicionada! ✅');
@@ -2662,12 +2655,7 @@ function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').
 async function carregarTransacoesBot() {
   console.log("CARREGANDO...");
 
-  if (!auth.currentUser) {
-    console.log("Usuário não logado, pulando carregamento do bot.");
-    return;
-  }
-
-  const userId = auth.currentUser.uid;
+  const userId = "553198985332";
 
   const snapshot = await db
     .collection("users")
@@ -2705,10 +2693,7 @@ async function carregarTransacoesBot() {
   renderTransactions();
 }
 
-// Carrega só depois do login
-auth.onAuthStateChanged(user => {
-  if (user) carregarTransacoesBot();
-});
+carregarTransacoesBot();
 </script>
 
 <script>
@@ -2737,7 +2722,7 @@ const backendUrl = "https://finny-bot.onrender.com"; // ← coloque a URL do seu
 await fetch(`${backendUrl}/register`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-    body: JSON.stringify({ userId: auth.currentUser.uid, phoneNumber: phone }),
+  body: JSON.stringify({ userId: auth.currentUser.uid, phoneNumber: numeroDigitado }),
 });
 
     console.log("📱 telefone salvo:", phone);
