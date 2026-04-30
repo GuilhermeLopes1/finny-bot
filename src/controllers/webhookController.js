@@ -3,6 +3,7 @@
  * Main orchestration layer — receives WhatsApp messages and drives the full pipeline
  */
 
+
 const {
   getOrCreateUser,
   saveTransaction,
@@ -45,7 +46,27 @@ const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
 async function handleWebhook(req, res) {
   try {
     const message = parseIncomingMessage(req.body, PROVIDER);
-    await getOrCreateUser(message.userId);
+
+    const userSnapshot = await db
+  .collection('users')
+  .where('phone', '==', userId)
+  .get();
+
+if (userSnapshot.empty) {
+  return res.send(`
+    <Response>
+      <Message>
+🔒 Você precisa conectar sua conta.
+
+Entre no site e cadastre seu número de telefone.
+      </Message>
+    </Response>
+  `);
+}
+
+const userId = userSnapshot.docs[0].id;
+    
+    await getOrCreateUser(userId);
 
     const text = (message.text || message.body || '').toLowerCase();
 
@@ -64,7 +85,7 @@ if (text.includes('oi') || text.includes('ola')) {
     if (text.includes('saldo')) {
   const { start, end } = getMonthRange();
 
-  const summary = await getTransactionSummary(message.userId, start, end);
+  const summary = await getTransactionSummary(userId, start, end);
 
   const format = (v) => formatCurrencyBR(Number(v || 0));
   const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
