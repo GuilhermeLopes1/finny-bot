@@ -1,11 +1,11 @@
 /**
  * Webhook Controller
- * Main orchestration layer â€” receives WhatsApp messages and drives the full pipeline
+ * Main orchestration layer — receives WhatsApp messages and drives the full pipeline
  */
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // IMPORTS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 const {
   getOrCreateUser,
@@ -27,14 +27,14 @@ const {
   generateMonthlySummaryNarrative,
 } = require('../services/aiService');
 
-// âœ… FIX #2: removido `const db = require(...).getDb()` no nÃ­vel do mÃ³dulo.
-//    Firebase pode nÃ£o estar pronto no momento do require.
-//    Agora getDb() Ã© lazy â€” chamado apenas dentro das funÃ§Ãµes, quando necessÃ¡rio.
+// ✅ FIX #2: removido `const db = require(...).getDb()` no nível do módulo.
+//    Firebase pode não estar pronto no momento do require.
+//    Agora getDb() é lazy — chamado apenas dentro das funções, quando necessário.
 function getDb() {
   return require('../config/firebase').getDb();
 }
 
-// âœ… FIX #10 (melhoria): parseFinanceMessage movido para o topo junto com os demais requires.
+// ✅ FIX #10 (melhoria): parseFinanceMessage movido para o topo junto com os demais requires.
 const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
 
 const { processVoiceMessage } = require('../services/audioService');
@@ -46,12 +46,12 @@ const logger = require('../utils/logger');
 
 const PROVIDER = process.env.WHATSAPP_PROVIDER || 'twilio';
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // UTILS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 /**
- * âœ… FIX #4: escapa caracteres reservados do XML antes de inserir no <Message>.
+ * ✅ FIX #4: escapa caracteres reservados do XML antes de inserir no <Message>.
  * Sem isso, qualquer categoria com "&", "<" ou ">" quebra o XML do Twilio.
  */
 function escapeXml(str) {
@@ -76,9 +76,9 @@ function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // MAIN WEBHOOK HANDLER
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 /**
  * POST /webhook
@@ -86,20 +86,20 @@ function capitalize(str) {
  */
 async function handleWebhook(req, res) {
   try {
-    // âœ… FIX: validaÃ§Ã£o de assinatura Twilio com URL correta para reverse proxy.
+    // ✅ FIX: validação de assinatura Twilio com URL correta para reverse proxy.
     //
     //    PROBLEMA ANTERIOR:
     //      validateTwilioSignature(req) usava req.protocol (retorna 'http' no Render)
     //      mas o Twilio sempre assina com 'https://finny-bot.onrender.com/webhook'.
-    //      Resultado: HMAC nunca batia â†’ 403 em TODAS as mensagens.
+    //      Resultado: HMAC nunca batia → 403 em TODAS as mensagens.
     //
-    //    SOLUÃ‡ÃƒO:
+    //    SOLUÇÃO:
     //      1. Usa WEBHOOK_URL do env (fonte da verdade, sem ambiguidade).
-    //      2. Se nÃ£o estiver definido, reconstrÃ³i com X-Forwarded-Proto/Host
+    //      2. Se não estiver definido, reconstrói com X-Forwarded-Proto/Host
     //         (headers injetados pelo reverse proxy do Render).
-    //      3. Em desenvolvimento (NODE_ENV=development), pula a validaÃ§Ã£o.
+    //      3. Em desenvolvimento (NODE_ENV=development), pula a validação.
     //
-    //    ENV NECESSÃRIA no Render:
+    //    ENV NECESSÁRIA no Render:
     //      WEBHOOK_URL = https://finny-bot.onrender.com/webhook
     if (PROVIDER === 'twilio') {
       const isDev = process.env.NODE_ENV === 'development';
@@ -107,7 +107,7 @@ async function handleWebhook(req, res) {
         const authToken      = process.env.TWILIO_AUTH_TOKEN;
         const twilioSig      = req.headers['x-twilio-signature'] || '';
 
-        // ReconstrÃ³i a URL pÃºblica â€” prioridade: env > forwarded headers > fallback
+        // Reconstrói a URL pública — prioridade: env > forwarded headers > fallback
         const webhookUrl =
           process.env.WEBHOOK_URL ||
           `${req.headers['x-forwarded-proto'] || 'https'}://${
@@ -130,17 +130,17 @@ async function handleWebhook(req, res) {
 
     const message = parseIncomingMessage(req.body, PROVIDER);
 
-    // âœ… FIX #3: `message.userId` pode conter o prefixo "whatsapp:+55..." ou estar ausente.
-    //    Usa `message.from` como fallback e sanitiza o nÃºmero antes de qualquer consulta.
+    // ✅ FIX #3: `message.userId` pode conter o prefixo "whatsapp:+55..." ou estar ausente.
+    //    Usa `message.from` como fallback e sanitiza o número antes de qualquer consulta.
     const rawPhone = message.from || message.userId || '';
     const phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
 
     if (!phone) {
-      logger.warn('handleWebhook: nÃºmero de telefone ausente na mensagem recebida', message);
-      return sendTwiml(res, 'âŒ NÃ£o foi possÃ­vel identificar seu nÃºmero. Tente novamente.');
+      logger.warn('handleWebhook: número de telefone ausente na mensagem recebida', message);
+      return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
     }
 
-    // âœ… FIX #3 (cont.): consulta usando o nÃºmero sanitizado
+    // ✅ FIX #3 (cont.): consulta usando o número sanitizado
     const db = getDb();
     const userSnapshot = await db
       .collection('users')
@@ -150,75 +150,75 @@ async function handleWebhook(req, res) {
     if (userSnapshot.empty) {
       return sendTwiml(
         res,
-        'ðŸ”’ VocÃª precisa conectar sua conta.\n\nEntre no site e cadastre seu nÃºmero de telefone.'
+        '🔒 Você precisa conectar sua conta.\n\nEntre no site e cadastre seu número de telefone.'
       );
     }
 
     const userId = userSnapshot.docs[0].id;
 
-    // âœ… FIX #3 (cont.): getOrCreateUser ainda Ã© Ãºtil para atualizar `lastSeenAt`,
-    //    mas nÃ£o precisamos do retorno â€” o userId jÃ¡ foi obtido acima.
+    // ✅ FIX #3 (cont.): getOrCreateUser ainda é útil para atualizar `lastSeenAt`,
+    //    mas não precisamos do retorno — o userId já foi obtido acima.
     await getOrCreateUser(userId);
 
     const text = (message.text || message.body || '').toLowerCase().trim();
 
-    // â”€â”€ SaudaÃ§Ã£o â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (text.includes('oi') || text.includes('ola') || text.includes('olÃ¡')) {
+    // ── Saudação ──────────────────────────────────────────────────────────────
+    if (text.includes('oi') || text.includes('ola') || text.includes('olá')) {
       return sendTwiml(
         res,
-        'OlÃ¡! ðŸ‘‹ Sou o FinnyBot.\n\nMe diga algo como:\nâ€¢ "gastei 50"\nâ€¢ "ganhei 1000"\nâ€¢ "saldo"'
+        'Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"'
       );
     }
 
-    // â”€â”€ Saldo â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Saldo ─────────────────────────────────────────────────────────────────
     if (text.includes('saldo')) {
       const { start, end } = getMonthRange();
       const summary = await getTransactionSummary(userId, start, end);
 
       const fmt = (v) => formatCurrencyBR(Number(v || 0));
-      const saldoEmoji = summary.balance >= 0 ? 'ðŸ˜Š' : 'âš ï¸';
+      const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
 
       return sendTwiml(
         res,
-        `ðŸ’° *Resumo do mÃªs*\n\nReceitas: ${fmt(summary.totalIncome)}\nGastos: ${fmt(summary.totalExpenses)}\nSaldo: ${fmt(summary.balance)} ${saldoEmoji}`
+        `💰 *Resumo do mês*\n\nReceitas: ${fmt(summary.totalIncome)}\nGastos: ${fmt(summary.totalExpenses)}\nSaldo: ${fmt(summary.balance)} ${saldoEmoji}`
       );
     }
 
-    // â”€â”€ AnÃ¡lise â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
-    if (text.includes('analise') || text.includes('anÃ¡lise')) {
+    // ── Análise ───────────────────────────────────────────────────────────────
+    if (text.includes('analise') || text.includes('análise')) {
       const { start, end } = getMonthRange();
       const summary    = await getTransactionSummary(userId, start, end);
       const comparison = await getMonthComparison(userId);
 
       const fmt = (v) => formatCurrencyBR(Number(v || 0));
-      let reply = `ðŸ“Š *AnÃ¡lise do mÃªs*\n\n`;
-      reply += `ðŸ’¸ Total gasto: ${fmt(summary.totalExpenses)}\n`;
+      let reply = `📊 *Análise do mês*\n\n`;
+      reply += `💸 Total gasto: ${fmt(summary.totalExpenses)}\n`;
 
       if (summary.topCategory) {
         const [cat, value] = summary.topCategory;
-        reply += `ðŸ† Maior gasto: ${cat} â€” ${fmt(value)}\n`;
+        reply += `🏆 Maior gasto: ${cat} — ${fmt(value)}\n`;
       }
 
       if (comparison.expenseDiff !== null) {
         const diff = Math.abs(comparison.expenseDiff).toFixed(0);
         reply +=
           comparison.expenseDiff > 0
-            ? `âš ï¸ Seus gastos aumentaram ${diff}% em relaÃ§Ã£o ao mÃªs passado\n`
-            : `âœ… Seus gastos diminuÃ­ram ${diff}% em relaÃ§Ã£o ao mÃªs passado\n`;
+            ? `⚠️ Seus gastos aumentaram ${diff}% em relação ao mês passado\n`
+            : `✅ Seus gastos diminuíram ${diff}% em relação ao mês passado\n`;
       }
 
       if (summary.topCategory) {
-        reply += `\nðŸ’¡ Dica: tente reduzir gastos com *${summary.topCategory[0]}*`;
+        reply += `\n💡 Dica: tente reduzir gastos com *${summary.topCategory[0]}*`;
       }
 
       return sendTwiml(res, reply);
     }
 
-    // â”€â”€ Fallback: tenta interpretar como lanÃ§amento financeiro â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+    // ── Fallback: tenta interpretar como lançamento financeiro ────────────────
     const parsed = await parseFinanceMessage(text, userId);
 
     let reply =
-      'NÃ£o entendi ðŸ¤”\n\nTente algo como:\nâ€¢ "gastei 50"\nâ€¢ "ganhei 1000"\nâ€¢ "saldo"';
+      'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
 
     if (parsed.type === 'expense' || parsed.type === 'income') {
       logger.info('Parsed finance message:', parsed);
@@ -230,7 +230,7 @@ async function handleWebhook(req, res) {
         category:    parsed.category,
       });
 
-      const emoji = parsed.type === 'income' ? 'ðŸ’°' : 'ðŸ’¸';
+      const emoji = parsed.type === 'income' ? '💰' : '💸';
       const label = parsed.type === 'income' ? 'Receita' : 'Gasto';
       const fmt   = (v) => formatCurrencyBR(Number(v || 0));
 
@@ -241,20 +241,20 @@ async function handleWebhook(req, res) {
         const summary        = await getTransactionSummary(userId, start, end);
         const totalCategory  = summary.byCategory?.[parsed.category] || 0;
 
-        reply += `\n\nðŸ“Š Total com ${parsed.category} este mÃªs: ${fmt(totalCategory)}`;
+        reply += `\n\n📊 Total com ${parsed.category} este mês: ${fmt(totalCategory)}`;
 
         if (summary.balance < 0) {
-          reply += `\nâš ï¸ VocÃª estÃ¡ com saldo negativo`;
+          reply += `\n⚠️ Você está com saldo negativo`;
         }
 
         const alertMsg = await sendSmartAlerts(userId);
         if (alertMsg) {
-          reply += `\n\nðŸš¨ *AtenÃ§Ã£o:*\n${alertMsg}`;
+          reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
         }
       }
     }
 
-    // ðŸ§  Aprendizado automÃ¡tico
+    // 🧠 Aprendizado automático
     if (parsed.originalText && parsed.category) {
       await db
         .collection('users')
@@ -269,34 +269,34 @@ async function handleWebhook(req, res) {
   } catch (error) {
     logger.error('handleWebhook error:', error);
 
-    // âœ… FIX #4 (aplicado tambÃ©m no catch): usa sendTwiml para garantir XML vÃ¡lido
-    return sendTwiml(res, 'Erro ðŸ˜•');
+    // ✅ FIX #4 (aplicado também no catch): usa sendTwiml para garantir XML válido
+    return sendTwiml(res, 'Erro 😕');
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // MESSAGE PROCESSING PIPELINE
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 /**
- * âœ… FIX #1: funÃ§Ã£o `processMessage` restaurada como async function completa.
+ * ✅ FIX #1: função `processMessage` restaurada como async function completa.
  *    O bloco `/* ... *\/` original fechava apenas os Steps 1-2, fazendo com que
- *    os Steps 3-7 ficassem FORA de qualquer funÃ§Ã£o â€” cÃ³digo Ã³rfÃ£o no nÃ­vel
- *    do mÃ³dulo, causando SyntaxError / ReferenceError no boot do servidor.
+ *    os Steps 3-7 ficassem FORA de qualquer função — código órfão no nível
+ *    do módulo, causando SyntaxError / ReferenceError no boot do servidor.
  */
 async function processMessage(message) {
   const { from, type } = message;
   const userId = (from || '').replace(/^whatsapp:/i, '').replace(/\D/g, '');
   let text = message.text;
 
-  // â”€â”€ Step 1: Ensure user exists â”€â”€
+  // ── Step 1: Ensure user exists ──
   await getOrCreateUser(from);
 
-  // â”€â”€ Step 2: Handle audio messages â”€â”€
+  // ── Step 2: Handle audio messages ──
   if (type === 'audio' && message.mediaUrl) {
     const result = await processVoiceMessage(message.mediaUrl, PROVIDER);
     if (!result.success || !result.text) {
-      await sendMessage(from, 'ðŸŽ¤ NÃ£o consegui entender o Ã¡udio. Pode escrever sua mensagem?');
+      await sendMessage(from, '🎤 Não consegui entender o áudio. Pode escrever sua mensagem?');
       return;
     }
     text = result.text;
@@ -304,40 +304,40 @@ async function processMessage(message) {
   }
 
   if (!text || text.trim().length === 0) {
-    await sendMessage(from, 'Oi! Pode me enviar uma mensagem de texto ou Ã¡udio. ðŸ˜Š');
+    await sendMessage(from, 'Oi! Pode me enviar uma mensagem de texto ou áudio. 😊');
     return;
   }
 
-  // â”€â”€ Step 3: Load conversation history â”€â”€
+  // ── Step 3: Load conversation history ──
   const history = await getConversationHistory(userId);
   const historyMessages = history.map((m) => ({ role: m.role, content: m.content }));
 
-  // â”€â”€ Step 4: Detect intent â”€â”€
+  // ── Step 4: Detect intent ──
   const intent = await parseIntent(text, historyMessages);
   logger.info(`Intent: ${JSON.stringify(intent)}`);
 
-  // â”€â”€ Step 5: Save user message to history â”€â”€
+  // ── Step 5: Save user message to history ──
   await saveConversationMessage(userId, 'user', text);
 
-  // â”€â”€ Step 6: Route to handler â”€â”€
+  // ── Step 6: Route to handler ──
   let reply;
   try {
     reply = await routeIntent(intent, text, userId, from, historyMessages);
   } catch (err) {
     logger.error(`Intent routing error (${intent.intent}):`, err);
-    reply = 'ðŸ˜• Tive um problema ao processar sua solicitaÃ§Ã£o. Pode tentar novamente?';
+    reply = '😕 Tive um problema ao processar sua solicitação. Pode tentar novamente?';
   }
 
-  // â”€â”€ Step 7: Send reply â”€â”€
+  // ── Step 7: Send reply ──
   if (reply) {
     await sendMessage(from, reply);
     await saveConversationMessage(userId, 'assistant', reply);
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // INTENT ROUTER
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 async function routeIntent(intent, rawText, userId, from, historyMessages) {
   switch (intent.intent) {
@@ -376,15 +376,15 @@ async function routeIntent(intent, rawText, userId, from, historyMessages) {
 
     default:
       if (intent.clarification_needed) {
-        return intent.clarification_question || 'NÃ£o entendi bem. Pode reformular? ðŸ˜Š';
+        return intent.clarification_question || 'Não entendi bem. Pode reformular? 😊';
       }
       return handleUnknown(rawText, historyMessages);
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // HANDLERS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 async function handleCreateTransaction(intent, rawText, userId, historyMessages) {
   const transactions = intent.transactions || [];
@@ -396,13 +396,13 @@ async function handleCreateTransaction(intent, rawText, userId, historyMessages)
   const tx = transactions[0];
 
   if (!tx.amount || tx.amount <= 0) {
-    return 'NÃ£o consegui identificar o valor. Pode repetir? Ex: "gastei 50 no mercado"';
+    return 'Não consegui identificar o valor. Pode repetir? Ex: "gastei 50 no mercado"';
   }
 
   await saveTransaction(userId, tx);
 
   const typeLabel = tx.type === 'income' ? 'receita' : 'gasto';
-  const emoji     = tx.type === 'income' ? 'ðŸ’°' : 'ðŸ’¸';
+  const emoji     = tx.type === 'income' ? '💰' : '💸';
 
   return `${emoji} ${capitalize(typeLabel)} registrado!\n*${tx.description}*\nValor: ${formatCurrencyBR(tx.amount)}\nCategoria: ${tx.category}`;
 }
@@ -417,11 +417,11 @@ async function handleMultipleTransactions(intent, rawText, userId, historyMessag
   const saved = await saveTransactionsBatch(userId, transactions);
 
   const lines = saved.map((tx) => {
-    const emoji = tx.type === 'income' ? 'ðŸ’°' : 'ðŸ’¸';
+    const emoji = tx.type === 'income' ? '💰' : '💸';
     return `${emoji} ${tx.description}: ${formatCurrencyBR(tx.amount)}`;
   });
 
-  return `âœ… ${saved.length} transaÃ§Ãµes registradas:\n${lines.join('\n')}`;
+  return `✅ ${saved.length} transações registradas:\n${lines.join('\n')}`;
 }
 
 async function handleQueryExpenses(intent, userId, rawText, historyMessages) {
@@ -431,7 +431,7 @@ async function handleQueryExpenses(intent, userId, rawText, historyMessages) {
   const periodLabel = getPeriodLabel(period);
 
   if (summary.totalExpenses === 0) {
-    return `VocÃª nÃ£o tem gastos registrados ${periodLabel}. ðŸŽ‰`;
+    return `Você não tem gastos registrados ${periodLabel}. 🎉`;
   }
 
   return await generateResponse(
@@ -449,7 +449,7 @@ async function handleQueryIncome(intent, userId, rawText, historyMessages) {
   const periodLabel  = getPeriodLabel(period);
 
   if (total === 0) {
-    return `VocÃª nÃ£o tem receitas registradas ${periodLabel}.`;
+    return `Você não tem receitas registradas ${periodLabel}.`;
   }
 
   return await generateResponse(
@@ -463,9 +463,9 @@ async function handleQueryBalance(intent, userId, historyMessages) {
   const { start, end } = getMonthRange();
   const summary        = await getTransactionSummary(userId, start, end);
   const month          = getCurrentMonthNameBR();
-  const emoji          = summary.balance >= 0 ? 'ðŸ˜Š' : 'ðŸ˜Ÿ';
+  const emoji          = summary.balance >= 0 ? '😊' : '😟';
 
-  return `${emoji} *Saldo de ${month}:*\nðŸ’° Receitas: ${formatCurrencyBR(summary.totalIncome)}\nðŸ’¸ Gastos: ${formatCurrencyBR(summary.totalExpenses)}\nðŸ“Š Saldo: ${formatCurrencyBR(summary.balance)}`;
+  return `${emoji} *Saldo de ${month}:*\n💰 Receitas: ${formatCurrencyBR(summary.totalIncome)}\n💸 Gastos: ${formatCurrencyBR(summary.totalExpenses)}\n📊 Saldo: ${formatCurrencyBR(summary.balance)}`;
 }
 
 async function handleQueryCategory(intent, userId, rawText, historyMessages) {
@@ -477,7 +477,7 @@ async function handleQueryCategory(intent, userId, rawText, historyMessages) {
   const periodLabel  = getPeriodLabel(period);
 
   if (!category || total === 0) {
-    return `VocÃª nÃ£o tem gastos em ${category || 'essa categoria'} ${periodLabel}.`;
+    return `Você não tem gastos em ${category || 'essa categoria'} ${periodLabel}.`;
   }
 
   return await generateResponse(
@@ -500,7 +500,7 @@ async function handleMonthlySummary(userId) {
 
 async function handleGreeting(userId, rawText, historyMessages) {
   const hour = new Date().getHours();
-  let greeting = 'OlÃ¡';
+  let greeting = 'Olá';
   if (hour < 12)       greeting = 'Bom dia';
   else if (hour < 18)  greeting = 'Boa tarde';
   else                 greeting = 'Boa noite';
@@ -508,10 +508,10 @@ async function handleGreeting(userId, rawText, historyMessages) {
   const isFirstTime = (historyMessages || []).length <= 2;
 
   if (isFirstTime) {
-    return `${greeting}! ðŸ‘‹ Sou o *Finny*, seu assistente financeiro pessoal.\n\nPosso te ajudar a:\nðŸ’¸ Registrar gastos e receitas\nðŸ“Š Ver resumos do mÃªs\nðŸŽ¯ Acompanhar metas\n\nExperimente: _"gastei 50 no mercado"_ ou _"quanto gastei esse mÃªs?"_`;
+    return `${greeting}! 👋 Sou o *Finny*, seu assistente financeiro pessoal.\n\nPosso te ajudar a:\n💸 Registrar gastos e receitas\n📊 Ver resumos do mês\n🎯 Acompanhar metas\n\nExperimente: _"gastei 50 no mercado"_ ou _"quanto gastei esse mês?"_`;
   }
 
-  return `${greeting}! ðŸ˜Š Como posso te ajudar hoje?`;
+  return `${greeting}! 😊 Como posso te ajudar hoje?`;
 }
 
 async function handleSetGoal(intent, userId, rawText, historyMessages) {
@@ -522,7 +522,7 @@ async function handleCheckGoals(userId) {
   const goals = await getUserGoals(userId);
 
   if (goals.length === 0) {
-    return 'VocÃª ainda nÃ£o tem metas configuradas. Para criar uma, diga algo como: "quero gastar no mÃ¡ximo R$500 com alimentaÃ§Ã£o esse mÃªs".';
+    return 'Você ainda não tem metas configuradas. Para criar uma, diga algo como: "quero gastar no máximo R$500 com alimentação esse mês".';
   }
 
   const { start, end } = getMonthRange();
@@ -530,45 +530,45 @@ async function handleCheckGoals(userId) {
   const alerts         = await generateGoalAlerts(goals, summary);
 
   if (alerts.length === 0) {
-    return 'âœ… Todas as suas metas estÃ£o dentro do limite!';
+    return '✅ Todas as suas metas estão dentro do limite!';
   }
 
   return alerts.map((a) => a.message).join('\n');
 }
 
 function handleHelp() {
-  return `ðŸ¤– *Finny â€” Seu Assistente Financeiro*
+  return `🤖 *Finny — Seu Assistente Financeiro*
 
 *Registrar gastos:*
-â€¢ "gastei 50 no mercado"
-â€¢ "paguei 30 de uber"
-â€¢ "foi 25 no ifood"
+• "gastei 50 no mercado"
+• "paguei 30 de uber"
+• "foi 25 no ifood"
 
 *Registrar receitas:*
-â€¢ "recebi 1200 de salÃ¡rio"
-â€¢ "entrou 500 de freela"
+• "recebi 1200 de salário"
+• "entrou 500 de freela"
 
 *Consultar gastos:*
-â€¢ "quanto gastei esse mÃªs?"
-â€¢ "quanto foi com alimentaÃ§Ã£o?"
-â€¢ "gastos dessa semana"
+• "quanto gastei esse mês?"
+• "quanto foi com alimentação?"
+• "gastos dessa semana"
 
 *Resumo:*
-â€¢ "resumo do mÃªs"
-â€¢ "como estÃ£o minhas finanÃ§as?"
+• "resumo do mês"
+• "como estão minhas finanças?"
 
 *Saldo:*
-â€¢ "qual meu saldo?"
-â€¢ "quanto tenho disponÃ­vel?"`;
+• "qual meu saldo?"
+• "quanto tenho disponível?"`;
 }
 
 async function handleUnknown(rawText, historyMessages) {
   return await generateResponse(rawText, { context: 'unknown_intent' }, historyMessages);
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // SMART ALERTS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 async function sendSmartAlerts(userId) {
   try {
@@ -590,9 +590,9 @@ async function sendSmartAlerts(userId) {
   }
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // HEALTH CHECK
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 async function handleHealthCheck(req, res) {
   res.json({
@@ -603,8 +603,8 @@ async function handleHealthCheck(req, res) {
   });
 }
 
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 // EXPORTS
-// â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€â”€
+// ─────────────────────────────────────────────
 
 module.exports = { handleWebhook, handleHealthCheck };
