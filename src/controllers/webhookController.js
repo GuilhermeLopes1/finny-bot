@@ -46,10 +46,9 @@ const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
 async function handleWebhook(req, res) {
   try {
     const message = parseIncomingMessage(req.body, PROVIDER);
-
-    const userSnapshot = await db
+const userSnapshot = await db
   .collection('users')
-  .where('phone', '==', message.userID)
+  .where('phone', '==', message.userId)
   .get();
 
 if (userSnapshot.empty) {
