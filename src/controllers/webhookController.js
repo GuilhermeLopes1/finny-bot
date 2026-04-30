@@ -3,6 +3,9 @@
  * Main orchestration layer — receives WhatsApp messages and drives the full pipeline
  */
 
+// ─────────────────────────────────────────────
+// IMPORTS
+// ─────────────────────────────────────────────
 
 const {
   getOrCreateUser,
@@ -24,7 +27,16 @@ const {
   generateMonthlySummaryNarrative,
 } = require('../services/aiService');
 
-const db = require('../config/firebase').getDb();
+// ✅ FIX #2: removido `const db = require(...).getDb()` no nível do módulo.
+//    Firebase pode não estar pronto no momento do require.
+//    Agora getDb() é lazy — chamado apenas dentro das funções, quando necessário.
+function getDb() {
+  return require('../config/firebase').getDb();
+}
+
+// ✅ FIX #10 (melhoria): parseFinanceMessage movido para o topo junto com os demais requires.
+const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
+
 const { processVoiceMessage } = require('../services/audioService');
 const { sendMessage, parseIncomingMessage, validateTwilioSignature } = require('../services/whatsappService');
 const { buildFirestoreFilters, normalizeCategory, getPeriodLabel } = require('../parsers/intentParser');
@@ -34,6 +46,36 @@ const logger = require('../utils/logger');
 const PROVIDER = process.env.WHATSAPP_PROVIDER || 'twilio';
 
 // ─────────────────────────────────────────────
+// UTILS
+// ─────────────────────────────────────────────
+
+/**
+ * ✅ FIX #4: escapa caracteres reservados do XML antes de inserir no <Message>.
+ * Sem isso, qualquer categoria com "&", "<" ou ">" quebra o XML do Twilio.
+ */
+function escapeXml(str) {
+  return String(str ?? '')
+    .replace(/&/g, '&amp;')
+    .replace(/</g, '&lt;')
+    .replace(/>/g, '&gt;')
+    .replace(/"/g, '&quot;')
+    .replace(/'/g, '&apos;');
+}
+
+/**
+ * Monta e envia a resposta TwiML de forma segura.
+ * Centralizar aqui garante que o escape nunca seja esquecido.
+ */
+function sendTwiml(res, message) {
+  res.set('Content-Type', 'text/xml');
+  res.send(`<Response><Message>${escapeXml(message)}</Message></Response>`);
+}
+
+function capitalize(str) {
+  return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+// ─────────────────────────────────────────────
 // MAIN WEBHOOK HANDLER
 // ─────────────────────────────────────────────
 
@@ -41,191 +83,158 @@ const PROVIDER = process.env.WHATSAPP_PROVIDER || 'twilio';
  * POST /webhook
  * Entry point for all incoming WhatsApp messages
  */
-const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
-
 async function handleWebhook(req, res) {
   try {
+    // ✅ FIX #9 (melhoria): valida assinatura Twilio — bloqueia requisições forjadas.
+    //    validateTwilioSignature estava importado mas nunca usado.
+    if (PROVIDER === 'twilio' && !validateTwilioSignature(req)) {
+      logger.warn('Twilio signature validation failed');
+      return res.status(403).send('Forbidden');
+    }
+
     const message = parseIncomingMessage(req.body, PROVIDER);
-const userSnapshot = await db
-  .collection('users')
-  .where('phone', '==', message.userId)
-  .get();
 
-if (userSnapshot.empty) {
-  return res.send(`
-    <Response>
-      <Message>
-🔒 Você precisa conectar sua conta.
+    // ✅ FIX #3: `message.userId` pode conter o prefixo "whatsapp:+55..." ou estar ausente.
+    //    Usa `message.from` como fallback e sanitiza o número antes de qualquer consulta.
+    const rawPhone = message.from || message.userId || '';
+    const phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
 
-Entre no site e cadastre seu número de telefone.
-      </Message>
-    </Response>
-  `);
-}
+    if (!phone) {
+      logger.warn('handleWebhook: número de telefone ausente na mensagem recebida', message);
+      return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
+    }
 
-const userId = userSnapshot.docs[0].id;
-    
+    // ✅ FIX #3 (cont.): consulta usando o número sanitizado
+    const db = getDb();
+    const userSnapshot = await db
+      .collection('users')
+      .where('phone', '==', phone)
+      .get();
+
+    if (userSnapshot.empty) {
+      return sendTwiml(
+        res,
+        '🔒 Você precisa conectar sua conta.\n\nEntre no site e cadastre seu número de telefone.'
+      );
+    }
+
+    const userId = userSnapshot.docs[0].id;
+
+    // ✅ FIX #3 (cont.): getOrCreateUser ainda é útil para atualizar `lastSeenAt`,
+    //    mas não precisamos do retorno — o userId já foi obtido acima.
     await getOrCreateUser(userId);
 
-    const text = (message.text || message.body || '').toLowerCase();
+    const text = (message.text || message.body || '').toLowerCase().trim();
 
-    // 👇 COLE AQUI (logo abaixo da linha 50)
-if (text.includes('oi') || text.includes('ola')) {
-  const reply = "Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
+    // ── Saudação ──────────────────────────────────────────────────────────────
+    if (text.includes('oi') || text.includes('ola') || text.includes('olá')) {
+      return sendTwiml(
+        res,
+        'Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"'
+      );
+    }
 
-  res.set('Content-Type', 'text/xml');
-  return res.send(`
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `);
-}
-
+    // ── Saldo ─────────────────────────────────────────────────────────────────
     if (text.includes('saldo')) {
-  const { start, end } = getMonthRange();
+      const { start, end } = getMonthRange();
+      const summary = await getTransactionSummary(userId, start, end);
 
-  const summary = await getTransactionSummary(userId, start, end);
+      const fmt = (v) => formatCurrencyBR(Number(v || 0));
+      const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
 
-  const format = (v) => formatCurrencyBR(Number(v || 0));
-  const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
-
-  const reply = `
-💰 *Resumo do mês*
-
-Receitas: ${format(summary.totalIncome)}
-Gastos: ${format(summary.totalExpenses)}
-Saldo: ${format(summary.balance)} ${saldoEmoji}
-`;
-
-  res.set('Content-Type', 'text/xml');
-  return res.send(`
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `);
-}
-    
-// 📊 ANÁLISE
-if (text.includes('analise') || text.includes('análise')) {
-  const { start, end } = getMonthRange();
-
-  const summary = await getTransactionSummary(userId, start, end);
-  const comparison = await getMonthComparison(userId);
-
-  const format = (v) => formatCurrencyBR(Number(v || 0));
-
-  let reply = `📊 *Análise do mês*\n\n`;
-
-  reply += `💸 Total gasto: ${format(summary.totalExpenses)}\n`;
-
-  if (summary.topCategory) {
-    const [cat, value] = summary.topCategory;
-    reply += `🏆 Maior gasto: ${cat} — ${format(value)}\n`;
-  }
-
-  if (comparison.expenseDiff !== null) {
-    const diff = comparison.expenseDiff.toFixed(0);
-
-    if (comparison.expenseDiff > 0) {
-      reply += `⚠️ Seus gastos aumentaram ${diff}% em relação ao mês passado\n`;
-    } else {
-      reply += `✅ Seus gastos diminuíram ${Math.abs(diff)}% em relação ao mês passado\n`;
-    }
-  }
-
-  if (summary.topCategory) {
-    reply += `\n💡 Dica: tente reduzir gastos com *${summary.topCategory[0]}*`;
-  }
-
-  res.set('Content-Type', 'text/xml');
-  return res.send(`
-    <Response>
-      <Message>${reply}</Message>
-    </Response>
-  `);
-}
-
-// ❗ FALLBACK (IMPORTANTE)
-
-// 👇 DEPOIS tenta entender finanças
-
-// 👇 tenta entender a mensagem financeira
-const parsed = await parseFinanceMessage(text, userId);
-
-let reply = 'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
-
-if (parsed.type === 'expense' || parsed.type === 'income') {
-
-  console.log("🧠 PARSED:", parsed);
-
-  await saveTransaction(userId, {
-    type: parsed.type,
-    amount: parsed.amount,
-    description: parsed.originalText || parsed.category,
-    category: parsed.category
-  });
-
-  const emoji = parsed.type === 'income' ? '💰' : '💸';
-  const label = parsed.type === 'income' ? 'Receita' : 'Gasto';
-  const format = (v) => formatCurrencyBR(Number(v || 0));
-
-  // resposta base
-  reply = `${emoji} ${label} registrada!\n${format(parsed.amount)} - ${parsed.category}`;
-
-  // 🔥 extras para gasto
-  if (parsed.type === 'expense') {
-    const { start, end } = getMonthRange();
-    const summary = await getTransactionSummary(userId, start, end);
-
-    const totalCategory = summary.byCategory?.[parsed.category] || 0;
-
-    reply += `\n\n📊 Total com ${parsed.category} este mês: ${format(totalCategory)}`;
-
-    if (summary.balance < 0) {
-      reply += `\n⚠️ Você está com saldo negativo`;
+      return sendTwiml(
+        res,
+        `💰 *Resumo do mês*\n\nReceitas: ${fmt(summary.totalIncome)}\nGastos: ${fmt(summary.totalExpenses)}\nSaldo: ${fmt(summary.balance)} ${saldoEmoji}`
+      );
     }
 
-    // 🚨 ALERTAS
-    const alertMsg = await sendSmartAlerts(userId);
+    // ── Análise ───────────────────────────────────────────────────────────────
+    if (text.includes('analise') || text.includes('análise')) {
+      const { start, end } = getMonthRange();
+      const summary    = await getTransactionSummary(userId, start, end);
+      const comparison = await getMonthComparison(userId);
 
-    if (alertMsg) {
-      reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+      const fmt = (v) => formatCurrencyBR(Number(v || 0));
+      let reply = `📊 *Análise do mês*\n\n`;
+      reply += `💸 Total gasto: ${fmt(summary.totalExpenses)}\n`;
+
+      if (summary.topCategory) {
+        const [cat, value] = summary.topCategory;
+        reply += `🏆 Maior gasto: ${cat} — ${fmt(value)}\n`;
+      }
+
+      if (comparison.expenseDiff !== null) {
+        const diff = Math.abs(comparison.expenseDiff).toFixed(0);
+        reply +=
+          comparison.expenseDiff > 0
+            ? `⚠️ Seus gastos aumentaram ${diff}% em relação ao mês passado\n`
+            : `✅ Seus gastos diminuíram ${diff}% em relação ao mês passado\n`;
+      }
+
+      if (summary.topCategory) {
+        reply += `\n💡 Dica: tente reduzir gastos com *${summary.topCategory[0]}*`;
+      }
+
+      return sendTwiml(res, reply);
     }
-  }
-}
 
-// 🧠 aprendizado automático
-if (parsed.originalText && parsed.category) {
-  await db
-    .collection('users')
-    .doc(userId)
-    .collection('learning')
-    .doc(parsed.originalText)
-    .set({
-      keyword: parsed.originalText,
-      category: parsed.category
-    });
-}
+    // ── Fallback: tenta interpretar como lançamento financeiro ────────────────
+    const parsed = await parseFinanceMessage(text, userId);
 
-// 📤 resposta final
-res.set('Content-Type', 'text/xml');
-return res.send(`
-  <Response>
-    <Message>${reply}</Message>
-  </Response>
-`);
+    let reply =
+      'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
 
-  
+    if (parsed.type === 'expense' || parsed.type === 'income') {
+      logger.info('Parsed finance message:', parsed);
+
+      await saveTransaction(userId, {
+        type:        parsed.type,
+        amount:      parsed.amount,
+        description: parsed.originalText || parsed.category,
+        category:    parsed.category,
+      });
+
+      const emoji = parsed.type === 'income' ? '💰' : '💸';
+      const label = parsed.type === 'income' ? 'Receita' : 'Gasto';
+      const fmt   = (v) => formatCurrencyBR(Number(v || 0));
+
+      reply = `${emoji} ${label} registrada!\n${fmt(parsed.amount)} - ${parsed.category}`;
+
+      if (parsed.type === 'expense') {
+        const { start, end } = getMonthRange();
+        const summary        = await getTransactionSummary(userId, start, end);
+        const totalCategory  = summary.byCategory?.[parsed.category] || 0;
+
+        reply += `\n\n📊 Total com ${parsed.category} este mês: ${fmt(totalCategory)}`;
+
+        if (summary.balance < 0) {
+          reply += `\n⚠️ Você está com saldo negativo`;
+        }
+
+        const alertMsg = await sendSmartAlerts(userId);
+        if (alertMsg) {
+          reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+        }
+      }
+    }
+
+    // 🧠 Aprendizado automático
+    if (parsed.originalText && parsed.category) {
+      await db
+        .collection('users')
+        .doc(userId)
+        .collection('learning')
+        .doc(parsed.originalText)
+        .set({ keyword: parsed.originalText, category: parsed.category });
+    }
+
+    return sendTwiml(res, reply);
 
   } catch (error) {
-    console.error(error);
+    logger.error('handleWebhook error:', error);
 
-    res.set('Content-Type', 'text/xml');
-    res.send(`
-      <Response>
-        <Message>Erro 😕</Message>
-      </Response>
-    `);
+    // ✅ FIX #4 (aplicado também no catch): usa sendTwiml para garantir XML válido
+    return sendTwiml(res, 'Erro 😕');
   }
 }
 
@@ -233,12 +242,19 @@ return res.send(`
 // MESSAGE PROCESSING PIPELINE
 // ─────────────────────────────────────────────
 
- /* sync function processMessage(message) {
-  const { userId, from, type } = message;
+/**
+ * ✅ FIX #1: função `processMessage` restaurada como async function completa.
+ *    O bloco `/* ... *\/` original fechava apenas os Steps 1-2, fazendo com que
+ *    os Steps 3-7 ficassem FORA de qualquer função — código órfão no nível
+ *    do módulo, causando SyntaxError / ReferenceError no boot do servidor.
+ */
+async function processMessage(message) {
+  const { from, type } = message;
+  const userId = (from || '').replace(/^whatsapp:/i, '').replace(/\D/g, '');
   let text = message.text;
 
   // ── Step 1: Ensure user exists ──
-  const user = await getOrCreateUser(from);
+  await getOrCreateUser(from);
 
   // ── Step 2: Handle audio messages ──
   if (type === 'audio' && message.mediaUrl) {
@@ -254,7 +270,7 @@ return res.send(`
   if (!text || text.trim().length === 0) {
     await sendMessage(from, 'Oi! Pode me enviar uma mensagem de texto ou áudio. 😊');
     return;
-  } */
+  }
 
   // ── Step 3: Load conversation history ──
   const history = await getConversationHistory(userId);
@@ -323,7 +339,6 @@ async function routeIntent(intent, rawText, userId, from, historyMessages) {
       return handleCheckGoals(userId);
 
     default:
-      // If unknown, try GPT general response
       if (intent.clarification_needed) {
         return intent.clarification_question || 'Não entendi bem. Pode reformular? 😊';
       }
@@ -335,9 +350,6 @@ async function routeIntent(intent, rawText, userId, from, historyMessages) {
 // HANDLERS
 // ─────────────────────────────────────────────
 
-/**
- * CREATE TRANSACTION
- */
 async function handleCreateTransaction(intent, rawText, userId, historyMessages) {
   const transactions = intent.transactions || [];
 
@@ -347,22 +359,18 @@ async function handleCreateTransaction(intent, rawText, userId, historyMessages)
 
   const tx = transactions[0];
 
-  // Validate
   if (!tx.amount || tx.amount <= 0) {
     return 'Não consegui identificar o valor. Pode repetir? Ex: "gastei 50 no mercado"';
   }
 
-  const saved = await saveTransaction(userId, tx);
+  await saveTransaction(userId, tx);
 
   const typeLabel = tx.type === 'income' ? 'receita' : 'gasto';
-  const emoji = tx.type === 'income' ? '💰' : '💸';
+  const emoji     = tx.type === 'income' ? '💰' : '💸';
 
   return `${emoji} ${capitalize(typeLabel)} registrado!\n*${tx.description}*\nValor: ${formatCurrencyBR(tx.amount)}\nCategoria: ${tx.category}`;
 }
 
-/**
- * MULTIPLE TRANSACTIONS
- */
 async function handleMultipleTransactions(intent, rawText, userId, historyMessages) {
   const transactions = intent.transactions || [];
 
@@ -380,66 +388,57 @@ async function handleMultipleTransactions(intent, rawText, userId, historyMessag
   return `✅ ${saved.length} transações registradas:\n${lines.join('\n')}`;
 }
 
-/**
- * QUERY EXPENSES
- */
 async function handleQueryExpenses(intent, userId, rawText, historyMessages) {
-  const filters = buildFirestoreFilters({ ...intent.filters, type: 'expense' });
-  const summary = await getTransactionSummary(userId, filters.startDate, filters.endDate);
-
-  const period = intent.filters?.period || 'month';
+  const filters  = buildFirestoreFilters({ ...intent.filters, type: 'expense' });
+  const summary  = await getTransactionSummary(userId, filters.startDate, filters.endDate);
+  const period   = intent.filters?.period || 'month';
   const periodLabel = getPeriodLabel(period);
 
   if (summary.totalExpenses === 0) {
     return `Você não tem gastos registrados ${periodLabel}. 🎉`;
   }
 
-  const context = { totalExpenses: summary.totalExpenses, period: periodLabel, byCategory: summary.byCategory };
-  return await generateResponse(rawText, context, historyMessages);
+  return await generateResponse(
+    rawText,
+    { totalExpenses: summary.totalExpenses, period: periodLabel, byCategory: summary.byCategory },
+    historyMessages
+  );
 }
 
-/**
- * QUERY INCOME
- */
 async function handleQueryIncome(intent, userId, rawText, historyMessages) {
-  const filters = buildFirestoreFilters({ ...intent.filters, type: 'income' });
+  const filters      = buildFirestoreFilters({ ...intent.filters, type: 'income' });
   const transactions = await queryTransactions(userId, { ...filters, type: 'income' });
-
-  const total = transactions.reduce((s, t) => s + t.amount, 0);
-  const period = intent.filters?.period || 'month';
-  const periodLabel = getPeriodLabel(period);
+  const total        = transactions.reduce((s, t) => s + t.amount, 0);
+  const period       = intent.filters?.period || 'month';
+  const periodLabel  = getPeriodLabel(period);
 
   if (total === 0) {
     return `Você não tem receitas registradas ${periodLabel}.`;
   }
 
-  return await generateResponse(rawText, { totalIncome: total, period: periodLabel, count: transactions.length }, historyMessages);
+  return await generateResponse(
+    rawText,
+    { totalIncome: total, period: periodLabel, count: transactions.length },
+    historyMessages
+  );
 }
 
-/**
- * QUERY BALANCE
- */
 async function handleQueryBalance(intent, userId, historyMessages) {
   const { start, end } = getMonthRange();
-  const summary = await getTransactionSummary(userId, start, end);
-
-  const month = getCurrentMonthNameBR();
-  const emoji = summary.balance >= 0 ? '😊' : '😟';
+  const summary        = await getTransactionSummary(userId, start, end);
+  const month          = getCurrentMonthNameBR();
+  const emoji          = summary.balance >= 0 ? '😊' : '😟';
 
   return `${emoji} *Saldo de ${month}:*\n💰 Receitas: ${formatCurrencyBR(summary.totalIncome)}\n💸 Gastos: ${formatCurrencyBR(summary.totalExpenses)}\n📊 Saldo: ${formatCurrencyBR(summary.balance)}`;
 }
 
-/**
- * QUERY CATEGORY
- */
 async function handleQueryCategory(intent, userId, rawText, historyMessages) {
-  const category = normalizeCategory(intent.filters?.category);
-  const filters = buildFirestoreFilters({ ...intent.filters, type: 'expense', category });
+  const category     = normalizeCategory(intent.filters?.category);
+  const filters      = buildFirestoreFilters({ ...intent.filters, type: 'expense', category });
   const transactions = await queryTransactions(userId, filters);
-
-  const total = transactions.reduce((s, t) => s + t.amount, 0);
-  const period = intent.filters?.period || 'month';
-  const periodLabel = getPeriodLabel(period);
+  const total        = transactions.reduce((s, t) => s + t.amount, 0);
+  const period       = intent.filters?.period || 'month';
+  const periodLabel  = getPeriodLabel(period);
 
   if (!category || total === 0) {
     return `Você não tem gastos em ${category || 'essa categoria'} ${periodLabel}.`;
@@ -452,38 +451,25 @@ async function handleQueryCategory(intent, userId, rawText, historyMessages) {
   );
 }
 
-/**
- * MONTHLY SUMMARY
- */
 async function handleMonthlySummary(userId) {
   const { start, end } = getMonthRange();
-  const summary = await getTransactionSummary(userId, start, end);
+  const summary        = await getTransactionSummary(userId, start, end);
+  const comparison     = await getMonthComparison(userId);
+  const alerts         = await generateSmartAlerts(comparison);
+  const goals          = await getUserGoals(userId);
+  const goalAlerts     = await generateGoalAlerts(goals, summary);
 
-  // Compare with last month for alerts
-  const comparison = await getMonthComparison(userId);
-  const alerts = await generateSmartAlerts(comparison);
-
-  // Goal alerts
-  const goals = await getUserGoals(userId);
-  const goalAlerts = await generateGoalAlerts(goals, summary);
-  const allAlerts = [...alerts, ...goalAlerts];
-
-  return await generateMonthlySummaryNarrative(summary, allAlerts);
+  return await generateMonthlySummaryNarrative(summary, [...alerts, ...goalAlerts]);
 }
 
-/**
- * GREETING
- */
 async function handleGreeting(userId, rawText, historyMessages) {
   const hour = new Date().getHours();
   let greeting = 'Olá';
-  if (hour < 12) greeting = 'Bom dia';
-  else if (hour < 18) greeting = 'Boa tarde';
-  else greeting = 'Boa noite';
+  if (hour < 12)       greeting = 'Bom dia';
+  else if (hour < 18)  greeting = 'Boa tarde';
+  else                 greeting = 'Boa noite';
 
-  // Check if first time
-  const history = historyMessages || [];
-  const isFirstTime = history.length <= 2;
+  const isFirstTime = (historyMessages || []).length <= 2;
 
   if (isFirstTime) {
     return `${greeting}! 👋 Sou o *Finny*, seu assistente financeiro pessoal.\n\nPosso te ajudar a:\n💸 Registrar gastos e receitas\n📊 Ver resumos do mês\n🎯 Acompanhar metas\n\nExperimente: _"gastei 50 no mercado"_ ou _"quanto gastei esse mês?"_`;
@@ -492,29 +478,20 @@ async function handleGreeting(userId, rawText, historyMessages) {
   return `${greeting}! 😊 Como posso te ajudar hoje?`;
 }
 
-/**
- * SET GOAL
- */
 async function handleSetGoal(intent, userId, rawText, historyMessages) {
-  return await generateResponse(
-    rawText,
-    { note: 'goal_setting_in_development' },
-    historyMessages
-  );
+  return await generateResponse(rawText, { note: 'goal_setting_in_development' }, historyMessages);
 }
 
-/**
- * CHECK GOALS
- */
 async function handleCheckGoals(userId) {
   const goals = await getUserGoals(userId);
+
   if (goals.length === 0) {
     return 'Você ainda não tem metas configuradas. Para criar uma, diga algo como: "quero gastar no máximo R$500 com alimentação esse mês".';
   }
 
   const { start, end } = getMonthRange();
-  const summary = await getTransactionSummary(userId, start, end);
-  const alerts = await generateGoalAlerts(goals, summary);
+  const summary        = await getTransactionSummary(userId, start, end);
+  const alerts         = await generateGoalAlerts(goals, summary);
 
   if (alerts.length === 0) {
     return '✅ Todas as suas metas estão dentro do limite!';
@@ -523,9 +500,6 @@ async function handleCheckGoals(userId) {
   return alerts.map((a) => a.message).join('\n');
 }
 
-/**
- * HELP
- */
 function handleHelp() {
   return `🤖 *Finny — Seu Assistente Financeiro*
 
@@ -552,24 +526,33 @@ function handleHelp() {
 • "quanto tenho disponível?"`;
 }
 
-/**
- * UNKNOWN INTENT — fallback to GPT
- */
 async function handleUnknown(rawText, historyMessages) {
-  return await generateResponse(
-    rawText,
-    { context: 'unknown_intent' },
-    historyMessages
-  );
+  return await generateResponse(rawText, { context: 'unknown_intent' }, historyMessages);
 }
 
 // ─────────────────────────────────────────────
-// SMART ALERTS CHECK
+// SMART ALERTS
 // ─────────────────────────────────────────────
 
-/**
- * After saving a transaction, check for alerts and send if relevant
- */
+async function sendSmartAlerts(userId) {
+  try {
+    const comparison = await getMonthComparison(userId);
+    const alerts     = await generateSmartAlerts(comparison);
+
+    if (!alerts || alerts.length === 0) return null;
+
+    const important = alerts.filter(
+      (a) => a.type === 'expense_spike' || a.type === 'goal_exceeded'
+    );
+
+    if (important.length === 0) return null;
+
+    return important.map((a) => a.message).join('\n');
+  } catch (e) {
+    logger.error('Erro ao gerar alertas:', e);
+    return null;
+  }
+}
 
 // ─────────────────────────────────────────────
 // HEALTH CHECK
@@ -577,42 +560,15 @@ async function handleUnknown(rawText, historyMessages) {
 
 async function handleHealthCheck(req, res) {
   res.json({
-    status: 'ok',
+    status:    'ok',
     timestamp: new Date().toISOString(),
-    provider: PROVIDER,
-    version: process.env.npm_package_version || '1.0.0',
+    provider:  PROVIDER,
+    version:   process.env.npm_package_version || '1.0.0',
   });
 }
 
 // ─────────────────────────────────────────────
-// UTILS
+// EXPORTS
 // ─────────────────────────────────────────────
-
-function capitalize(str) {
-  return str.charAt(0).toUpperCase() + str.slice(1);
-}
-
-async function sendSmartAlerts(userId) {
-  try {
-    const comparison = await getMonthComparison(userId);
-    const alerts = await generateSmartAlerts(comparison);
-
-    if (!alerts || alerts.length === 0) return null;
-
-    // pega só alertas importantes
-    const important = alerts.filter(
-      (a) => a.type === 'expense_spike' || a.type === 'goal_exceeded'
-    );
-
-    if (important.length === 0) return null;
-
-    return important.map(a => a.message).join('\n');
-
-  } catch (e) {
-    console.error('Erro ao gerar alertas:', e);
-    return null;
-  }
-}
-
 
 module.exports = { handleWebhook, handleHealthCheck };
