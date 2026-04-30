@@ -151,10 +151,26 @@ if (phone.startsWith('55') && phone.length === 13) {
     //    mas a query usava 'phone' — resultando em userSnapshot.empty = true
     //    para TODOS os usuários → mensagem "🔒 precisa conectar" mesmo cadastrado.
     const db = getDb();
+
+    // 🔍 DEBUG TEMPORÁRIO
+    logger.info('=== DEBUG PHONE ===');
+    logger.info('rawPhone: ' + rawPhone);
+    logger.info('phone normalizado: ' + phone);
+    logger.info('phone.length: ' + phone.length);
+
+    const allUsers = await db.collection('users').get();
+    allUsers.forEach(doc => {
+      const data = doc.data();
+      logger.info(`Firestore user => id: ${doc.id} | phoneNumber: "${data.phoneNumber}" | length: ${String(data.phoneNumber || '').length}`);
+    });
+    // 🔍 FIM DEBUG
+
     const userSnapshot = await db
       .collection('users')
       .where('phoneNumber', '==', phone)
       .get();
+
+    logger.info('userSnapshot.empty: ' + userSnapshot.empty);
 
     if (userSnapshot.empty) {
       return sendTwiml(
