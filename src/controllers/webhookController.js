@@ -231,6 +231,26 @@ async function handleWebhook(req, res) {
       return sendTwiml(res, reply);
     }
 
+    // ── Consultas avançadas (integradas ao routeIntent) ─────────────────────────
+const queryKeywords = [
+  'quanto gastei', 'quanto ganhei', 'quanto recebi', 'gastos', 'receitas',
+  'histórico', 'historico', 'alimentação', 'transporte', 'mercado', 'saúde',
+  'semana', 'mês passado', 'mes passado', 'hoje', 'ontem', 'última semana',
+  'categoria', 'resumo', 'extrato', 'lista', 'mostre', 'mostra', 'ver',
+];
+
+if (queryKeywords.some((kw) => text.includes(kw))) {
+  try {
+    const { parseIntent } = require('../services/aiService');
+    const intent = await parseIntent(text, []);
+    const replyFromIntent = await routeIntent(intent, text, userId, null, []);
+    return sendTwiml(res, replyFromIntent || 'Não encontrei informações para essa consulta.');
+  } catch (queryErr) {
+    logger.warn('Erro ao rotear consulta: ' + queryErr.message);
+    // Continua para o fallback normal
+  }
+}
+
     // ── Fallback: tenta interpretar como lançamento financeiro ────────────────
     let parsed;
     try {
