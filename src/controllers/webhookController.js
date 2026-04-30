@@ -110,7 +110,7 @@ if (text.includes('analise') || text.includes('análise')) {
   const { start, end } = getMonthRange();
 
   const summary = await getTransactionSummary(userId, start, end);
-  const comparison = await getMonthComparison(message.userId);
+  const comparison = await getMonthComparison(.userId);
 
   const format = (v) => formatCurrencyBR(Number(v || 0));
 
@@ -166,8 +166,6 @@ if (parsed.type === 'expense' || parsed.type === 'income') {
 
 const { getDb } = require('../config/firebase');
 const db = getDb();
-
-const userId = message.userId;
   
 console.log("🧠 PARSED:", parsed);
 await saveTransaction(userId, {
@@ -188,7 +186,7 @@ reply = `${emoji} ${label} registrada!\n${format(parsed.amount)} - ${parsed.cate
 // 🔥 tudo junto
 if (parsed.type === 'expense') {
   const { start, end } = getMonthRange();
-  const summary = await getTransactionSummary(message.userId, start, end);
+  const summary = await getTransactionSummary(userId, start, end);
 
   const totalCategory = summary.byCategory?.[parsed.category] || 0;
 
@@ -199,7 +197,7 @@ if (parsed.type === 'expense') {
   }
 
   // 🚨 ALERTAS AUTOMÁTICOS
-  const alertMsg = await sendSmartAlerts(message.userId);
+  const alertMsg = await sendSmartAlerts(userID);
 
   if (alertMsg) {
     reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
@@ -212,7 +210,7 @@ if (parsed.type === 'expense') {
 if (parsed.originalText && parsed.category) {
   await db
     .collection('users')
-    .doc(message.userId)
+    .doc(userId)
     .collection('learning')
     .doc(parsed.originalText)
     .set({
