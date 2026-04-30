@@ -2662,7 +2662,12 @@ function escHtml(s){return String(s).replace(/&/g,'&amp;').replace(/</g,'&lt;').
 async function carregarTransacoesBot() {
   console.log("CARREGANDO...");
 
-  const userId = "553198985332";
+  if (!auth.currentUser) {
+    console.log("Usuário não logado, pulando carregamento do bot.");
+    return;
+  }
+
+  const userId = auth.currentUser.uid;
 
   const snapshot = await db
     .collection("users")
@@ -2700,7 +2705,10 @@ async function carregarTransacoesBot() {
   renderTransactions();
 }
 
-carregarTransacoesBot();
+// Carrega só depois do login
+auth.onAuthStateChanged(user => {
+  if (user) carregarTransacoesBot();
+});
 </script>
 
 <script>
@@ -2729,7 +2737,7 @@ const backendUrl = "https://finny-bot.onrender.com"; // ← coloque a URL do seu
 await fetch(`${backendUrl}/register`, {
   method: "POST",
   headers: { "Content-Type": "application/json" },
-  body: JSON.stringify({ userId: auth.currentUser.uid, phoneNumber: numeroDigitado }),
+    body: JSON.stringify({ userId: auth.currentUser.uid, phoneNumber: phone }),
 });
 
     console.log("📱 telefone salvo:", phone);
