@@ -146,67 +146,55 @@ if (text.includes('analise') || text.includes('análise')) {
 }
 
 // ❗ FALLBACK (IMPORTANTE)
-const reply = "Não entendi 🤔\n\nTente algo como:\n• 'gastei 50'\n• 'ganhei 1000'\n• 'saldo'";
-
-res.set('Content-Type', 'text/xml');
-return res.send(`
-  <Response>
-    <Message>${reply}</Message>
-  </Response>
-`);
-    
 
 // 👇 DEPOIS tenta entender finanças
 
+// 👇 tenta entender a mensagem financeira
 const parsed = await parseFinanceMessage(text, userId);
-    
-let reply = 'Não entendi 🤔';
+
+let reply = 'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
 
 if (parsed.type === 'expense' || parsed.type === 'income') {
 
-const { getDb } = require('../config/firebase');
-const db = getDb();
-  
-console.log("🧠 PARSED:", parsed);
-await saveTransaction(userId, {
-  type: parsed.type,
-  amount: parsed.amount,
-  description: parsed.originalText || parsed.category,
-  category: parsed.category
-});
+  console.log("🧠 PARSED:", parsed);
+
+  await saveTransaction(userId, {
+    type: parsed.type,
+    amount: parsed.amount,
+    description: parsed.originalText || parsed.category,
+    category: parsed.category
+  });
 
   const emoji = parsed.type === 'income' ? '💰' : '💸';
   const label = parsed.type === 'income' ? 'Receita' : 'Gasto';
   const format = (v) => formatCurrencyBR(Number(v || 0));
 
   // resposta base
-// resposta base
-reply = `${emoji} ${label} registrada!\n${format(parsed.amount)} - ${parsed.category}`;
+  reply = `${emoji} ${label} registrada!\n${format(parsed.amount)} - ${parsed.category}`;
 
-// 🔥 tudo junto
-if (parsed.type === 'expense') {
-  const { start, end } = getMonthRange();
-  const summary = await getTransactionSummary(userId, start, end);
+  // 🔥 extras para gasto
+  if (parsed.type === 'expense') {
+    const { start, end } = getMonthRange();
+    const summary = await getTransactionSummary(userId, start, end);
 
-  const totalCategory = summary.byCategory?.[parsed.category] || 0;
+    const totalCategory = summary.byCategory?.[parsed.category] || 0;
 
-  reply += `\n\n📊 Total com ${parsed.category} este mês: ${format(totalCategory)}`;
+    reply += `\n\n📊 Total com ${parsed.category} este mês: ${format(totalCategory)}`;
 
-  if (summary.balance < 0) {
-    reply += `\n⚠️ Você está com saldo negativo`;
-  }
+    if (summary.balance < 0) {
+      reply += `\n⚠️ Você está com saldo negativo`;
+    }
 
-  // 🚨 ALERTAS AUTOMÁTICOS
-  const alertMsg = await sendSmartAlerts(userId);
+    // 🚨 ALERTAS
+    const alertMsg = await sendSmartAlerts(userId);
 
-  if (alertMsg) {
-    reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+    if (alertMsg) {
+      reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+    }
   }
 }
 
-}
-
-
+// 🧠 aprendizado automático
 if (parsed.originalText && parsed.category) {
   await db
     .collection('users')
@@ -219,12 +207,13 @@ if (parsed.originalText && parsed.category) {
     });
 }
 
-    res.set('Content-Type', 'text/xml');
-    res.send(`
-      <Response>
-        <Message>${reply}</Message>
-      </Response>
-    `);
+// 📤 resposta final
+res.set('Content-Type', 'text/xml');
+return res.send(`
+  <Response>
+    <Message>${reply}</Message>
+  </Response>
+`);
 
   
 
