@@ -121,19 +121,26 @@ async function queryTransactions(userId, filters = {}) {
 
   let transactions = data.transactions || [];
 
-  // filtro por tipo
+  // 🔥 filtro por tipo
   if (filters.type) {
     transactions = transactions.filter(t => t.type === filters.type);
   }
 
-  // filtro por categoria
+  // 🔥 filtro por categoria
   if (filters.category) {
     transactions = transactions.filter(t => t.category === filters.category);
   }
 
+  // 🔥 filtro por data (ESSENCIAL)
+  if (filters.startDate && filters.endDate) {
+    transactions = transactions.filter(t => {
+      const date = new Date(t.date);
+      return date >= filters.startDate && date <= filters.endDate;
+    });
+  }
+
   return transactions;
 }
-
 /**
  * Get summarized stats for a period
  */
