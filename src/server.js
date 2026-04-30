@@ -5,6 +5,9 @@
 
 require('dotenv').config();
 
+const { handleRegisterUser } = require('./controllers/webhookController');
+app.post('/register', handleRegisterUser);
+
 const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
