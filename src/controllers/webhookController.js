@@ -27,16 +27,12 @@ const {
   generateMonthlySummaryNarrative,
 } = require('../services/aiService');
 
-// ✅ FIX #2: removido `const db = require(...).getDb()` no nível do módulo.
-//    Firebase pode não estar pronto no momento do require.
-//    Agora getDb() é lazy — chamado apenas dentro das funções, quando necessário.
+// getDb() é lazy — chamado apenas dentro das funções, quando necessário.
 function getDb() {
   return require('../config/firebase').getDb();
 }
 
-// ✅ FIX #10 (melhoria): parseFinanceMessage movido para o topo junto com os demais requires.
 const { parseFinanceMessage } = require('../utils/parseFinanceMessage');
-
 const { processVoiceMessage } = require('../services/audioService');
 const twilio = require('twilio');
 const { sendMessage, parseIncomingMessage } = require('../services/whatsappService');
@@ -50,10 +46,6 @@ const PROVIDER = process.env.WHATSAPP_PROVIDER || 'twilio';
 // UTILS
 // ─────────────────────────────────────────────
 
-/**
- * ✅ FIX #4: escapa caracteres reservados do XML antes de inserir no <Message>.
- * Sem isso, qualquer categoria com "&", "<" ou ">" quebra o XML do Twilio.
- */
 function escapeXml(str) {
   return String(str ?? '')
     .replace(/&/g, '&amp;')
@@ -63,10 +55,6 @@ function escapeXml(str) {
     .replace(/'/g, '&apos;');
 }
 
-/**
- * Monta e envia a resposta TwiML de forma segura.
- * Centralizar aqui garante que o escape nunca seja esquecido.
- */
 function sendTwiml(res, message) {
   res.set('Content-Type', 'text/xml');
   res.send(`<Response><Message>${escapeXml(message)}</Message></Response>`);
@@ -74,6 +62,26 @@ function sendTwiml(res, message) {
 
 function capitalize(str) {
   return str.charAt(0).toUpperCase() + str.slice(1);
+}
+
+/**
+ * Normaliza o número de telefone recebido do WhatsApp para o formato
+ * salvo no Firestore (55 + DDD + 9 dígitos).
+ *
+ * Casos tratados:
+ *  - Remove prefixo "whatsapp:" e caracteres não-numéricos
+ *  - Números BR com 12 dígitos (55 + DDD + 8 dígitos, formato antigo):
+ *    insere o 9 após o DDD → 13 dígitos
+ */
+function normalizePhone(rawPhone) {
+  let phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
+
+  // Formato antigo sem o 9: 55 + DDD(2) + número(8) = 12 dígitos
+  if (phone.startsWith('55') && phone.length === 12) {
+    phone = phone.slice(0, 4) + '9' + phone.slice(4);
+  }
+
+  return phone;
 }
 
 // ─────────────────────────────────────────────
@@ -86,28 +94,10 @@ function capitalize(str) {
  */
 async function handleWebhook(req, res) {
   try {
-    // ✅ FIX: validação de assinatura Twilio com URL correta para reverse proxy.
-    //
-    //    PROBLEMA ANTERIOR:
-    //      validateTwilioSignature(req) usava req.protocol (retorna 'http' no Render)
-    //      mas o Twilio sempre assina com 'https://finny-bot.onrender.com/webhook'.
-    //      Resultado: HMAC nunca batia → 403 em TODAS as mensagens.
-    //
-    //    SOLUÇÃO:
-    //      1. Usa WEBHOOK_URL do env (fonte da verdade, sem ambiguidade).
-    //      2. Se não estiver definido, reconstrói com X-Forwarded-Proto/Host
-    //         (headers injetados pelo reverse proxy do Render).
-    //      3. Em desenvolvimento (NODE_ENV=development), pula a validação.
-    //
-    //    ENV NECESSÁRIA no Render:
-    //      WEBHOOK_URL = https://finny-bot.onrender.com/webhook
     if (PROVIDER === 'twilio') {
-      const isDev = process.env.NODE_ENV === 'development';
+      const isDev    = process.env.NODE_ENV === 'development';
       const authToken = process.env.TWILIO_AUTH_TOKEN;
 
-      // ✅ FIX: guarda authToken antes de usar — se undefined, twilio.validateRequest
-      //    joga TypeError que cai no catch e retorna "Erro 😕" para o usuário.
-      //    Agora: se o token não estiver configurado, apenas avisa no log e segue.
       if (!authToken) {
         logger.warn('⚠️  TWILIO_AUTH_TOKEN não configurado — validação de assinatura desativada!');
       } else if (!isDev) {
@@ -123,54 +113,27 @@ async function handleWebhook(req, res) {
         if (!isValid) {
           logger.warn('Twilio signature validation failed', {
             webhookUrl,
-            twilioSig: twilioSig.slice(0, 10) + '...'
+            twilioSig: twilioSig.slice(0, 10) + '...',
           });
           return res.status(403).send('Forbidden');
         }
       }
     }
 
-    const message = parseIncomingMessage(req.body, PROVIDER);
-
-    // ✅ FIX #3: `message.userId` pode conter o prefixo "whatsapp:+55..." ou estar ausente.
-    //    Usa `message.from` como fallback e sanitiza o número antes de qualquer consulta.
+    const message  = parseIncomingMessage(req.body, PROVIDER);
     const rawPhone = message.from || message.userId || '';
-    let phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
-// Remove o código do país 55 se o número tiver 13 dígitos (55 + 11 dígitos BR)
-if (phone.startsWith('55') && phone.length === 13) {
-  phone = phone.slice(2);
-}
-    
+    const phone    = normalizePhone(rawPhone);
+
     if (!phone) {
       logger.warn('handleWebhook: número de telefone ausente na mensagem recebida', message);
       return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
     }
 
-    // ✅ FIX: campo corrigido de 'phone' para 'phoneNumber'.
-    //    getOrCreateUser() salva o documento com o campo 'phoneNumber',
-    //    mas a query usava 'phone' — resultando em userSnapshot.empty = true
-    //    para TODOS os usuários → mensagem "🔒 precisa conectar" mesmo cadastrado.
-    const db = getDb();
-
-    // 🔍 DEBUG TEMPORÁRIO
-    logger.info('=== DEBUG PHONE ===');
-    logger.info('rawPhone: ' + rawPhone);
-    logger.info('phone normalizado: ' + phone);
-    logger.info('phone.length: ' + phone.length);
-
-    const allUsers = await db.collection('users').get();
-    allUsers.forEach(doc => {
-      const data = doc.data();
-      logger.info(`Firestore user => id: ${doc.id} | phoneNumber: "${data.phoneNumber}" | length: ${String(data.phoneNumber || '').length}`);
-    });
-    // 🔍 FIM DEBUG
-
+    const db           = getDb();
     const userSnapshot = await db
       .collection('users')
       .where('phoneNumber', '==', phone)
       .get();
-
-    logger.info('userSnapshot.empty: ' + userSnapshot.empty);
 
     if (userSnapshot.empty) {
       return sendTwiml(
@@ -180,9 +143,6 @@ if (phone.startsWith('55') && phone.length === 13) {
     }
 
     const userId = userSnapshot.docs[0].id;
-
-    // ✅ FIX #3 (cont.): getOrCreateUser ainda é útil para atualizar `lastSeenAt`,
-    //    mas não precisamos do retorno — o userId já foi obtido acima.
     await getOrCreateUser(userId);
 
     const text = (message.text || message.body || '').toLowerCase().trim();
@@ -198,10 +158,9 @@ if (phone.startsWith('55') && phone.length === 13) {
     // ── Saldo ─────────────────────────────────────────────────────────────────
     if (text.includes('saldo')) {
       const { start, end } = getMonthRange();
-      const summary = await getTransactionSummary(userId, start, end);
-
-      const fmt = (v) => formatCurrencyBR(Number(v || 0));
-      const saldoEmoji = summary.balance >= 0 ? '😊' : '⚠️';
+      const summary        = await getTransactionSummary(userId, start, end);
+      const fmt            = (v) => formatCurrencyBR(Number(v || 0));
+      const saldoEmoji     = summary.balance >= 0 ? '😊' : '⚠️';
 
       return sendTwiml(
         res,
@@ -212,10 +171,10 @@ if (phone.startsWith('55') && phone.length === 13) {
     // ── Análise ───────────────────────────────────────────────────────────────
     if (text.includes('analise') || text.includes('análise')) {
       const { start, end } = getMonthRange();
-      const summary    = await getTransactionSummary(userId, start, end);
-      const comparison = await getMonthComparison(userId);
+      const summary        = await getTransactionSummary(userId, start, end);
+      const comparison     = await getMonthComparison(userId);
+      const fmt            = (v) => formatCurrencyBR(Number(v || 0));
 
-      const fmt = (v) => formatCurrencyBR(Number(v || 0));
       let reply = `📊 *Análise do mês*\n\n`;
       reply += `💸 Total gasto: ${fmt(summary.totalExpenses)}\n`;
 
@@ -242,8 +201,7 @@ if (phone.startsWith('55') && phone.length === 13) {
     // ── Fallback: tenta interpretar como lançamento financeiro ────────────────
     const parsed = await parseFinanceMessage(text, userId);
 
-    let reply =
-      'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
+    let reply = 'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
 
     if (parsed.type === 'expense' || parsed.type === 'income') {
       logger.info('Parsed finance message:', parsed);
@@ -292,12 +250,8 @@ if (phone.startsWith('55') && phone.length === 13) {
     return sendTwiml(res, reply);
 
   } catch (error) {
-    // ✅ FIX: loga a mensagem E o stack completo para aparecer no Render.
-    //    Antes só logava o objeto error, que não era serializavel pelo logger
-    //    e aparecia como {} nos logs — tornando impossível diagnosticar o problema.
     logger.error('handleWebhook error: ' + error.message);
     logger.error(error.stack ?? error);
-
     return sendTwiml(res, 'Erro 😕 Tente novamente em instantes.');
   }
 }
@@ -306,15 +260,9 @@ if (phone.startsWith('55') && phone.length === 13) {
 // MESSAGE PROCESSING PIPELINE
 // ─────────────────────────────────────────────
 
-/**
- * ✅ FIX #1: função `processMessage` restaurada como async function completa.
- *    O bloco `/* ... *\/` original fechava apenas os Steps 1-2, fazendo com que
- *    os Steps 3-7 ficassem FORA de qualquer função — código órfão no nível
- *    do módulo, causando SyntaxError / ReferenceError no boot do servidor.
- */
 async function processMessage(message) {
   const { from, type } = message;
-  const userId = (from || '').replace(/^whatsapp:/i, '').replace(/\D/g, '');
+  const userId = normalizePhone(from || '');
   let text = message.text;
 
   // ── Step 1: Ensure user exists ──
@@ -337,7 +285,7 @@ async function processMessage(message) {
   }
 
   // ── Step 3: Load conversation history ──
-  const history = await getConversationHistory(userId);
+  const history         = await getConversationHistory(userId);
   const historyMessages = history.map((m) => ({ role: m.role, content: m.content }));
 
   // ── Step 4: Detect intent ──
@@ -453,9 +401,9 @@ async function handleMultipleTransactions(intent, rawText, userId, historyMessag
 }
 
 async function handleQueryExpenses(intent, userId, rawText, historyMessages) {
-  const filters  = buildFirestoreFilters({ ...intent.filters, type: 'expense' });
-  const summary  = await getTransactionSummary(userId, filters.startDate, filters.endDate);
-  const period   = intent.filters?.period || 'month';
+  const filters     = buildFirestoreFilters({ ...intent.filters, type: 'expense' });
+  const summary     = await getTransactionSummary(userId, filters.startDate, filters.endDate);
+  const period      = intent.filters?.period || 'month';
   const periodLabel = getPeriodLabel(period);
 
   if (summary.totalExpenses === 0) {
@@ -529,9 +477,9 @@ async function handleMonthlySummary(userId) {
 async function handleGreeting(userId, rawText, historyMessages) {
   const hour = new Date().getHours();
   let greeting = 'Olá';
-  if (hour < 12)       greeting = 'Bom dia';
-  else if (hour < 18)  greeting = 'Boa tarde';
-  else                 greeting = 'Boa noite';
+  if (hour < 12)      greeting = 'Bom dia';
+  else if (hour < 18) greeting = 'Boa tarde';
+  else                greeting = 'Boa noite';
 
   const isFirstTime = (historyMessages || []).length <= 2;
 
