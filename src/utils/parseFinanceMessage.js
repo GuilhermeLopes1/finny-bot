@@ -74,3 +74,50 @@ const yesterday = new Date(fakeNow);
 yesterday.setUTCDate(yesterday.getUTCDate() - 1);
 console.log('Hoje (UTC):', fakeNow.toISOString().slice(0,10));
 console.log('Ontem calculado:', yesterday.toISOString().slice(0,10), yesterday.toISOString().slice(0,10) === '2024-04-30' ? '✅' : '❌');
+
+// ─── Classificação de tipo ────────────────────────────────────────────────
+const incomeKeywords  = ['recebi','ganhei','entrou','pagaram','caiu','depositaram','transferiram'];
+const expenseKeywords = ['gastei','paguei','comprei','foi','gasto','saiu','cobrado','cobrada','debitou'];
+
+function detectType(text) {
+  const t = text.toLowerCase();
+  if (incomeKeywords.some(k => t.includes(k)))  return 'income';
+  if (expenseKeywords.some(k => t.includes(k))) return 'expense';
+  return 'unknown';
+}
+
+// ─── Categorização básica ─────────────────────────────────────────────────
+const CATEGORY_MAP = [
+  [['uber','99','taxi','táxi','ônibus','metro','metrô','gasolina','combustível','posto'], 'Transporte'],
+  [['mercado','supermercado','feira','hortifruti'],                                       'Mercado'],
+  [['restaurante','ifood','almoço','janta','lanche','café','pizza','hamburguer'],         'Alimentação'],
+  [['aluguel'],                                                                           'Moradia'],
+  [['salário','salario','freela','freelance','décimo','decimo'],                          'Renda'],
+  [['farmácia','farmacia','remédio','remedio','médico','medico','saúde'],                 'Saúde'],
+  [['luz','água','agua','internet','telefone','conta'],                                   'Contas'],
+];
+
+function detectCategory(text) {
+  const t = text.toLowerCase();
+  for (const [keywords, category] of CATEGORY_MAP) {
+    if (keywords.some(k => t.includes(k))) return category;
+  }
+  return 'Outros';
+}
+
+// ─── Export principal ─────────────────────────────────────────────────────
+async function parseFinanceMessage(text, userId) {
+  const lower  = text.toLowerCase();
+  const amount = extractValue(lower);
+  const type   = detectType(lower);
+  const category = detectCategory(lower);
+
+  return {
+    type,
+    amount,
+    category,
+    originalText: text,
+  };
+}
+
+module.exports = { parseFinanceMessage };
