@@ -110,7 +110,7 @@ if (text.includes('analise') || text.includes('análise')) {
   const { start, end } = getMonthRange();
 
   const summary = await getTransactionSummary(userId, start, end);
-  const comparison = await getMonthComparison(.userId);
+  const comparison = await getMonthComparison(userId);
 
   const format = (v) => formatCurrencyBR(Number(v || 0));
 
