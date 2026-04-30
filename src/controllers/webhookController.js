@@ -135,8 +135,12 @@ async function handleWebhook(req, res) {
     // ✅ FIX #3: `message.userId` pode conter o prefixo "whatsapp:+55..." ou estar ausente.
     //    Usa `message.from` como fallback e sanitiza o número antes de qualquer consulta.
     const rawPhone = message.from || message.userId || '';
-    const phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
-
+    let phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
+// Remove o código do país 55 se o número tiver 13 dígitos (55 + 11 dígitos BR)
+if (phone.startsWith('55') && phone.length === 13) {
+  phone = phone.slice(2);
+}
+    
     if (!phone) {
       logger.warn('handleWebhook: número de telefone ausente na mensagem recebida', message);
       return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
