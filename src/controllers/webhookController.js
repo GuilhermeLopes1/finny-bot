@@ -1,3 +1,4 @@
+
 /**
  * Webhook Controller
  * Main orchestration layer — receives WhatsApp messages and drives the full pipeline
@@ -65,20 +66,27 @@ function capitalize(str) {
 }
 
 /**
- * Normaliza o número de telefone recebido do WhatsApp para o formato
- * salvo no Firestore (55 + DDD + 9 dígitos).
+ * Normaliza o número de telefone para o formato padrão do sistema:
+ * 11 dígitos — DDD (2) + 9 + número (8) — sem código do país.
  *
- * Casos tratados:
- *  - Remove prefixo "whatsapp:" e caracteres não-numéricos
- *  - Números BR com 12 dígitos (55 + DDD + 8 dígitos, formato antigo):
- *    insere o 9 após o DDD → 13 dígitos
+ * Exemplos de entrada → saída:
+ *   "whatsapp:+5531998985332" → "31998985332"  (13 dígitos com 55)
+ *   "whatsapp:+55319 8985332" → "31998985332"  (12 dígitos, formato antigo sem o 9)
+ *   "31998985332"             → "31998985332"  (já no formato correto)
  */
 function normalizePhone(rawPhone) {
-  let phone = rawPhone.replace(/^whatsapp:/i, '').replace(/\D/g, '');
+  // Remove prefixo whatsapp: e qualquer caractere não-numérico
+  let phone = String(rawPhone || '').replace(/^whatsapp:/i, '').replace(/\D/g, '');
 
-  // Formato antigo sem o 9: 55 + DDD(2) + número(8) = 12 dígitos
-  if (phone.startsWith('55') && phone.length === 12) {
-    phone = phone.slice(0, 4) + '9' + phone.slice(4);
+  // Remove o código do país 55 se presente
+  if (phone.startsWith('55') && phone.length >= 12) {
+    phone = phone.slice(2);
+  }
+
+  // Formato antigo (8 dígitos após DDD, sem o 9): insere o 9 após o DDD
+  // Ex: 3198985332 (10 dígitos) → 31998985332 (11 dígitos)
+  if (phone.length === 10) {
+    phone = phone.slice(0, 2) + '9' + phone.slice(2);
   }
 
   return phone;
@@ -94,8 +102,9 @@ function normalizePhone(rawPhone) {
  */
 async function handleWebhook(req, res) {
   try {
+    // ── Validação de assinatura Twilio ────────────────────────────────────────
     if (PROVIDER === 'twilio') {
-      const isDev    = process.env.NODE_ENV === 'development';
+      const isDev     = process.env.NODE_ENV === 'development';
       const authToken = process.env.TWILIO_AUTH_TOKEN;
 
       if (!authToken) {
@@ -120,15 +129,19 @@ async function handleWebhook(req, res) {
       }
     }
 
+    // ── Identifica o número do usuário ────────────────────────────────────────
     const message  = parseIncomingMessage(req.body, PROVIDER);
     const rawPhone = message.from || message.userId || '';
     const phone    = normalizePhone(rawPhone);
 
-    if (!phone) {
-      logger.warn('handleWebhook: número de telefone ausente na mensagem recebida', message);
+    if (!phone || phone.length < 10) {
+      logger.warn('handleWebhook: número inválido ou ausente', { rawPhone, phone });
       return sendTwiml(res, '❌ Não foi possível identificar seu número. Tente novamente.');
     }
 
+    logger.info(`Mensagem recebida de: ${phone}`);
+
+    // ── Busca usuário no Firestore ────────────────────────────────────────────
     const db           = getDb();
     const userSnapshot = await db
       .collection('users')
@@ -136,23 +149,43 @@ async function handleWebhook(req, res) {
       .get();
 
     if (userSnapshot.empty) {
+      logger.warn(`Usuário não encontrado para o número: ${phone}`);
       return sendTwiml(
         res,
-        '🔒 Você precisa conectar sua conta.\n\nEntre no site e cadastre seu número de telefone.'
+        '🔒 Você precisa conectar sua conta.\n\nAcesse o site Allo Finanças e cadastre seu número de telefone (apenas DDD + número, sem o 55).'
       );
     }
 
     const userId = userSnapshot.docs[0].id;
-    await getOrCreateUser(userId);
+
+    // Atualiza lastSeenAt sem bloquear o fluxo em caso de erro
+    getOrCreateUser(userId).catch((err) =>
+      logger.warn('Falha ao atualizar lastSeenAt: ' + err.message)
+    );
 
     const text = (message.text || message.body || '').toLowerCase().trim();
 
+    if (!text) {
+      return sendTwiml(res, 'Olá! Envie uma mensagem de texto para começar. 😊');
+    }
+
     // ── Saudação ──────────────────────────────────────────────────────────────
-    if (text.includes('oi') || text.includes('ola') || text.includes('olá')) {
+    if (/\b(oi|ol[aá]|hey|e a[ií]|bom dia|boa tarde|boa noite)\b/.test(text)) {
+      const hour = new Date().getHours();
+      let greeting = 'Olá';
+      if (hour < 12)      greeting = 'Bom dia';
+      else if (hour < 18) greeting = 'Boa tarde';
+      else                greeting = 'Boa noite';
+
       return sendTwiml(
         res,
-        'Olá! 👋 Sou o FinnyBot.\n\nMe diga algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"'
+        `${greeting}! 👋 Sou o *Finny*, seu assistente financeiro.\n\nMe diga algo como:\n• "gastei 50 no mercado"\n• "ganhei 1000 de salário"\n• "saldo"\n• "análise"`
       );
+    }
+
+    // ── Ajuda ─────────────────────────────────────────────────────────────────
+    if (text.includes('ajuda') || text.includes('help') || text === '?') {
+      return sendTwiml(res, handleHelp());
     }
 
     // ── Saldo ─────────────────────────────────────────────────────────────────
@@ -169,7 +202,7 @@ async function handleWebhook(req, res) {
     }
 
     // ── Análise ───────────────────────────────────────────────────────────────
-    if (text.includes('analise') || text.includes('análise')) {
+    if (text.includes('analise') || text.includes('análise') || text.includes('análise')) {
       const { start, end } = getMonthRange();
       const summary        = await getTransactionSummary(userId, start, end);
       const comparison     = await getMonthComparison(userId);
@@ -199,11 +232,17 @@ async function handleWebhook(req, res) {
     }
 
     // ── Fallback: tenta interpretar como lançamento financeiro ────────────────
-    const parsed = await parseFinanceMessage(text, userId);
+    let parsed;
+    try {
+      parsed = await parseFinanceMessage(text, userId);
+    } catch (parseErr) {
+      logger.error('Erro ao parsear mensagem financeira: ' + parseErr.message);
+      parsed = {};
+    }
 
-    let reply = 'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"';
+    let reply = 'Não entendi 🤔\n\nTente algo como:\n• "gastei 50"\n• "ganhei 1000"\n• "saldo"\n• "ajuda"';
 
-    if (parsed.type === 'expense' || parsed.type === 'income') {
+    if (parsed && (parsed.type === 'expense' || parsed.type === 'income')) {
       logger.info('Parsed finance message:', parsed);
 
       await saveTransaction(userId, {
@@ -217,42 +256,122 @@ async function handleWebhook(req, res) {
       const label = parsed.type === 'income' ? 'Receita' : 'Gasto';
       const fmt   = (v) => formatCurrencyBR(Number(v || 0));
 
-      reply = `${emoji} ${label} registrada!\n${fmt(parsed.amount)} - ${parsed.category}`;
+      reply = `${emoji} *${label} registrada!*\n${fmt(parsed.amount)} — ${parsed.category}`;
 
       if (parsed.type === 'expense') {
-        const { start, end } = getMonthRange();
-        const summary        = await getTransactionSummary(userId, start, end);
-        const totalCategory  = summary.byCategory?.[parsed.category] || 0;
+        try {
+          const { start, end } = getMonthRange();
+          const summary        = await getTransactionSummary(userId, start, end);
+          const totalCategory  = summary.byCategory?.[parsed.category] || 0;
 
-        reply += `\n\n📊 Total com ${parsed.category} este mês: ${fmt(totalCategory)}`;
+          reply += `\n\n📊 Total com *${parsed.category}* este mês: ${fmt(totalCategory)}`;
 
-        if (summary.balance < 0) {
-          reply += `\n⚠️ Você está com saldo negativo`;
-        }
+          if (summary.balance < 0) {
+            reply += `\n⚠️ Você está com saldo negativo`;
+          }
 
-        const alertMsg = await sendSmartAlerts(userId);
-        if (alertMsg) {
-          reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+          const alertMsg = await sendSmartAlerts(userId);
+          if (alertMsg) {
+            reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
+          }
+        } catch (summaryErr) {
+          logger.warn('Erro ao buscar resumo pós-transação: ' + summaryErr.message);
         }
       }
-    }
 
-    // 🧠 Aprendizado automático
-    if (parsed.originalText && parsed.category) {
-      await db
-        .collection('users')
-        .doc(userId)
-        .collection('learning')
-        .doc(parsed.originalText)
-        .set({ keyword: parsed.originalText, category: parsed.category });
+      // 🧠 Aprendizado automático
+      if (parsed.originalText && parsed.category) {
+        db.collection('users')
+          .doc(userId)
+          .collection('learning')
+          .doc(parsed.originalText)
+          .set({ keyword: parsed.originalText, category: parsed.category })
+          .catch((err) => logger.warn('Erro ao salvar aprendizado: ' + err.message));
+      }
     }
 
     return sendTwiml(res, reply);
 
   } catch (error) {
     logger.error('handleWebhook error: ' + error.message);
-    logger.error(error.stack ?? error);
-    return sendTwiml(res, 'Erro 😕 Tente novamente em instantes.');
+    logger.error(error.stack ?? String(error));
+    return sendTwiml(res, 'Desculpe, tive um problema interno. Tente novamente em instantes. 😕');
+  }
+}
+
+// ─────────────────────────────────────────────
+// REGISTRO DE USUÁRIO (chamado pelo site)
+// ─────────────────────────────────────────────
+
+/**
+ * POST /register
+ * Recebe { userId, phoneNumber } do site Allo Finanças,
+ * atualiza o phoneNumber no Firestore e envia mensagem de boas-vindas via WhatsApp.
+ *
+ * O site deve chamar este endpoint após o usuário cadastrar o número.
+ * phoneNumber deve ser enviado SEM o 55 — apenas DDD + 9 + número (11 dígitos).
+ */
+async function handleRegisterUser(req, res) {
+  try {
+    const { userId, phoneNumber } = req.body || {};
+
+    if (!userId || !phoneNumber) {
+      return res.status(400).json({ error: 'userId e phoneNumber são obrigatórios.' });
+    }
+
+    // Normaliza o número recebido do site
+    const phone = normalizePhone(phoneNumber);
+
+    if (phone.length !== 11) {
+      return res.status(400).json({
+        error: 'Número inválido. Use apenas DDD + 9 + número (11 dígitos, sem o 55).',
+        recebido: phone,
+      });
+    }
+
+    // Verifica se já existe outro usuário com esse número
+    const db            = getDb();
+    const existing      = await db.collection('users').where('phoneNumber', '==', phone).get();
+    const alreadyExists = !existing.empty && existing.docs[0].id !== userId;
+
+    if (alreadyExists) {
+      return res.status(409).json({ error: 'Esse número já está vinculado a outra conta.' });
+    }
+
+    // Salva o número no documento do usuário
+    await db.collection('users').doc(userId).set(
+      { phoneNumber: phone, updatedAt: new Date().toISOString() },
+      { merge: true }
+    );
+
+    logger.info(`Usuário ${userId} registrou o número ${phone}`);
+
+    // Envia mensagem de boas-vindas via WhatsApp
+    const welcomeMessage =
+      `👋 Olá! Sou o *Finny*, seu assistente financeiro pessoal da *Allo Finanças*! 🎉\n\n` +
+      `Sua conta está conectada com sucesso! ✅\n\n` +
+      `Agora você pode me enviar mensagens como:\n` +
+      `• _"gastei 50 no mercado"_\n` +
+      `• _"recebi 1200 de salário"_\n` +
+      `• _"qual meu saldo?"_\n` +
+      `• _"análise"_\n\n` +
+      `Estou aqui para te ajudar a organizar suas finanças! 💚`;
+
+    try {
+      const whatsappNumber = `+55${phone}`;
+      await sendMessage(whatsappNumber, welcomeMessage);
+      logger.info(`Mensagem de boas-vindas enviada para ${whatsappNumber}`);
+    } catch (msgErr) {
+      // Não falha o registro se a mensagem não for enviada
+      logger.warn('Falha ao enviar mensagem de boas-vindas: ' + msgErr.message);
+    }
+
+    return res.status(200).json({ success: true, message: 'Número registrado e mensagem enviada.' });
+
+  } catch (error) {
+    logger.error('handleRegisterUser error: ' + error.message);
+    logger.error(error.stack ?? String(error));
+    return res.status(500).json({ error: 'Erro interno ao registrar usuário.' });
   }
 }
 
@@ -265,10 +384,8 @@ async function processMessage(message) {
   const userId = normalizePhone(from || '');
   let text = message.text;
 
-  // ── Step 1: Ensure user exists ──
   await getOrCreateUser(from);
 
-  // ── Step 2: Handle audio messages ──
   if (type === 'audio' && message.mediaUrl) {
     const result = await processVoiceMessage(message.mediaUrl, PROVIDER);
     if (!result.success || !result.text) {
@@ -284,18 +401,14 @@ async function processMessage(message) {
     return;
   }
 
-  // ── Step 3: Load conversation history ──
   const history         = await getConversationHistory(userId);
   const historyMessages = history.map((m) => ({ role: m.role, content: m.content }));
 
-  // ── Step 4: Detect intent ──
   const intent = await parseIntent(text, historyMessages);
   logger.info(`Intent: ${JSON.stringify(intent)}`);
 
-  // ── Step 5: Save user message to history ──
   await saveConversationMessage(userId, 'user', text);
 
-  // ── Step 6: Route to handler ──
   let reply;
   try {
     reply = await routeIntent(intent, text, userId, from, historyMessages);
@@ -304,7 +417,6 @@ async function processMessage(message) {
     reply = '😕 Tive um problema ao processar sua solicitação. Pode tentar novamente?';
   }
 
-  // ── Step 7: Send reply ──
   if (reply) {
     await sendMessage(from, reply);
     await saveConversationMessage(userId, 'assistant', reply);
@@ -319,37 +431,26 @@ async function routeIntent(intent, rawText, userId, from, historyMessages) {
   switch (intent.intent) {
     case 'create_transaction':
       return handleCreateTransaction(intent, rawText, userId, historyMessages);
-
     case 'create_multiple_transactions':
       return handleMultipleTransactions(intent, rawText, userId, historyMessages);
-
     case 'query_expenses':
       return handleQueryExpenses(intent, userId, rawText, historyMessages);
-
     case 'query_income':
       return handleQueryIncome(intent, userId, rawText, historyMessages);
-
     case 'query_balance':
       return handleQueryBalance(intent, userId, historyMessages);
-
     case 'query_category':
       return handleQueryCategory(intent, userId, rawText, historyMessages);
-
     case 'monthly_summary':
       return handleMonthlySummary(userId);
-
     case 'greeting':
       return handleGreeting(userId, rawText, historyMessages);
-
     case 'help':
       return handleHelp();
-
     case 'set_goal':
       return handleSetGoal(intent, userId, rawText, historyMessages);
-
     case 'check_goal':
       return handleCheckGoals(userId);
-
     default:
       if (intent.clarification_needed) {
         return intent.clarification_question || 'Não entendi bem. Pode reformular? 😊';
@@ -364,39 +465,29 @@ async function routeIntent(intent, rawText, userId, from, historyMessages) {
 
 async function handleCreateTransaction(intent, rawText, userId, historyMessages) {
   const transactions = intent.transactions || [];
-
   if (transactions.length === 0) {
     return await generateResponse(rawText, { error: 'no_transaction_found' }, historyMessages);
   }
-
   const tx = transactions[0];
-
   if (!tx.amount || tx.amount <= 0) {
     return 'Não consegui identificar o valor. Pode repetir? Ex: "gastei 50 no mercado"';
   }
-
   await saveTransaction(userId, tx);
-
   const typeLabel = tx.type === 'income' ? 'receita' : 'gasto';
   const emoji     = tx.type === 'income' ? '💰' : '💸';
-
   return `${emoji} ${capitalize(typeLabel)} registrado!\n*${tx.description}*\nValor: ${formatCurrencyBR(tx.amount)}\nCategoria: ${tx.category}`;
 }
 
 async function handleMultipleTransactions(intent, rawText, userId, historyMessages) {
   const transactions = intent.transactions || [];
-
   if (transactions.length === 0) {
     return await generateResponse(rawText, { error: 'no_transactions_found' }, historyMessages);
   }
-
   const saved = await saveTransactionsBatch(userId, transactions);
-
   const lines = saved.map((tx) => {
     const emoji = tx.type === 'income' ? '💰' : '💸';
     return `${emoji} ${tx.description}: ${formatCurrencyBR(tx.amount)}`;
   });
-
   return `✅ ${saved.length} transações registradas:\n${lines.join('\n')}`;
 }
 
@@ -405,11 +496,9 @@ async function handleQueryExpenses(intent, userId, rawText, historyMessages) {
   const summary     = await getTransactionSummary(userId, filters.startDate, filters.endDate);
   const period      = intent.filters?.period || 'month';
   const periodLabel = getPeriodLabel(period);
-
   if (summary.totalExpenses === 0) {
     return `Você não tem gastos registrados ${periodLabel}. 🎉`;
   }
-
   return await generateResponse(
     rawText,
     { totalExpenses: summary.totalExpenses, period: periodLabel, byCategory: summary.byCategory },
@@ -423,11 +512,9 @@ async function handleQueryIncome(intent, userId, rawText, historyMessages) {
   const total        = transactions.reduce((s, t) => s + t.amount, 0);
   const period       = intent.filters?.period || 'month';
   const periodLabel  = getPeriodLabel(period);
-
   if (total === 0) {
     return `Você não tem receitas registradas ${periodLabel}.`;
   }
-
   return await generateResponse(
     rawText,
     { totalIncome: total, period: periodLabel, count: transactions.length },
@@ -440,7 +527,6 @@ async function handleQueryBalance(intent, userId, historyMessages) {
   const summary        = await getTransactionSummary(userId, start, end);
   const month          = getCurrentMonthNameBR();
   const emoji          = summary.balance >= 0 ? '😊' : '😟';
-
   return `${emoji} *Saldo de ${month}:*\n💰 Receitas: ${formatCurrencyBR(summary.totalIncome)}\n💸 Gastos: ${formatCurrencyBR(summary.totalExpenses)}\n📊 Saldo: ${formatCurrencyBR(summary.balance)}`;
 }
 
@@ -451,11 +537,9 @@ async function handleQueryCategory(intent, userId, rawText, historyMessages) {
   const total        = transactions.reduce((s, t) => s + t.amount, 0);
   const period       = intent.filters?.period || 'month';
   const periodLabel  = getPeriodLabel(period);
-
   if (!category || total === 0) {
     return `Você não tem gastos em ${category || 'essa categoria'} ${periodLabel}.`;
   }
-
   return await generateResponse(
     rawText,
     { category, total, period: periodLabel, count: transactions.length },
@@ -470,7 +554,6 @@ async function handleMonthlySummary(userId) {
   const alerts         = await generateSmartAlerts(comparison);
   const goals          = await getUserGoals(userId);
   const goalAlerts     = await generateGoalAlerts(goals, summary);
-
   return await generateMonthlySummaryNarrative(summary, [...alerts, ...goalAlerts]);
 }
 
@@ -480,13 +563,10 @@ async function handleGreeting(userId, rawText, historyMessages) {
   if (hour < 12)      greeting = 'Bom dia';
   else if (hour < 18) greeting = 'Boa tarde';
   else                greeting = 'Boa noite';
-
   const isFirstTime = (historyMessages || []).length <= 2;
-
   if (isFirstTime) {
     return `${greeting}! 👋 Sou o *Finny*, seu assistente financeiro pessoal.\n\nPosso te ajudar a:\n💸 Registrar gastos e receitas\n📊 Ver resumos do mês\n🎯 Acompanhar metas\n\nExperimente: _"gastei 50 no mercado"_ ou _"quanto gastei esse mês?"_`;
   }
-
   return `${greeting}! 😊 Como posso te ajudar hoje?`;
 }
 
@@ -496,19 +576,15 @@ async function handleSetGoal(intent, userId, rawText, historyMessages) {
 
 async function handleCheckGoals(userId) {
   const goals = await getUserGoals(userId);
-
   if (goals.length === 0) {
     return 'Você ainda não tem metas configuradas. Para criar uma, diga algo como: "quero gastar no máximo R$500 com alimentação esse mês".';
   }
-
   const { start, end } = getMonthRange();
   const summary        = await getTransactionSummary(userId, start, end);
   const alerts         = await generateGoalAlerts(goals, summary);
-
   if (alerts.length === 0) {
     return '✅ Todas as suas metas estão dentro do limite!';
   }
-
   return alerts.map((a) => a.message).join('\n');
 }
 
@@ -550,15 +626,11 @@ async function sendSmartAlerts(userId) {
   try {
     const comparison = await getMonthComparison(userId);
     const alerts     = await generateSmartAlerts(comparison);
-
     if (!alerts || alerts.length === 0) return null;
-
     const important = alerts.filter(
       (a) => a.type === 'expense_spike' || a.type === 'goal_exceeded'
     );
-
     if (important.length === 0) return null;
-
     return important.map((a) => a.message).join('\n');
   } catch (e) {
     logger.error('Erro ao gerar alertas:', e);
@@ -583,4 +655,4 @@ async function handleHealthCheck(req, res) {
 // EXPORTS
 // ─────────────────────────────────────────────
 
-module.exports = { handleWebhook, handleHealthCheck };
+module.exports = { handleWebhook, handleRegisterUser, handleHealthCheck };
