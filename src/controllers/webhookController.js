@@ -233,7 +233,7 @@ return res.send(`
 // MESSAGE PROCESSING PIPELINE
 // ─────────────────────────────────────────────
 
-async function processMessage(message) {
+ /* sync function processMessage(message) {
   const { userId, from, type } = message;
   let text = message.text;
 
@@ -254,7 +254,7 @@ async function processMessage(message) {
   if (!text || text.trim().length === 0) {
     await sendMessage(from, 'Oi! Pode me enviar uma mensagem de texto ou áudio. 😊');
     return;
-  }
+  } */
 
   // ── Step 3: Load conversation history ──
   const history = await getConversationHistory(userId);
