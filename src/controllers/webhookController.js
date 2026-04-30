@@ -197,7 +197,7 @@ if (parsed.type === 'expense') {
   }
 
   // 🚨 ALERTAS AUTOMÁTICOS
-  const alertMsg = await sendSmartAlerts(userID);
+  const alertMsg = await sendSmartAlerts(userId);
 
   if (alertMsg) {
     reply += `\n\n🚨 *Atenção:*\n${alertMsg}`;
