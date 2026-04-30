@@ -137,8 +137,10 @@ return res.send(`
     
 
 // 👇 DEPOIS tenta entender finanças
-const parsed = await parseFinanceMessage(text, message.userId);
+const userId = message.userId;
 
+const parsed = await parseFinanceMessage(text, userId);
+    
 let reply = 'Não entendi 🤔';
 
 if (parsed.type === 'expense' || parsed.type === 'income') {
@@ -146,20 +148,8 @@ if (parsed.type === 'expense' || parsed.type === 'income') {
 const { getDb } = require('../config/firebase');
 const db = getDb();
 
-const userSnapshot = await db
-  .collection('users')
-  .where('phone', '==', message.userId)
-  .get();
-
-let userId;
-
-if (!userSnapshot.empty) {
-  userId = userSnapshot.docs[0].id;
-  console.log("🔥 Usuário encontrado:", userId);
-} else {
-  userId = message.userId;
-  console.log("⚠️ Usuário NÃO encontrado, usando telefone");
-}
+const userId = message.userId;
+  
 console.log("🧠 PARSED:", parsed);
 await saveTransaction(userId, {
   type: parsed.type,
