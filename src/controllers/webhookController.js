@@ -109,7 +109,7 @@ Saldo: ${format(summary.balance)} ${saldoEmoji}
 if (text.includes('analise') || text.includes('análise')) {
   const { start, end } = getMonthRange();
 
-  const summary = await getTransactionSummary(message.userId, start, end);
+  const summary = await getTransactionSummary(userId, start, end);
   const comparison = await getMonthComparison(message.userId);
 
   const format = (v) => formatCurrencyBR(Number(v || 0));
@@ -157,7 +157,6 @@ return res.send(`
     
 
 // 👇 DEPOIS tenta entender finanças
-const userId = message.userId;
 
 const parsed = await parseFinanceMessage(text, userId);
     
