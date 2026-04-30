@@ -115,45 +115,23 @@ async function saveTransaction(userId, transaction) {
  */
 async function queryTransactions(userId, filters = {}) {
   const db = getDb();
-  let query = db
-    .collection(COLLECTIONS.USERS)
-    .doc(userId)
-    .collection(COLLECTIONS.TRANSACTIONS);
 
-  // Date range filter
-  if (filters.startDate) {
-    query = query.where(
-      'date',
-      '>=',
-      admin.firestore.Timestamp.fromDate(filters.startDate)
-    );
-  }
-  if (filters.endDate) {
-    query = query.where(
-      'date',
-      '<=',
-      admin.firestore.Timestamp.fromDate(filters.endDate)
-    );
-  }
+  const userDoc = await db.collection('users').doc(userId).get();
+  const data = userDoc.data() || {};
 
-  // Type filter
+  let transactions = data.transactions || [];
+
+  // filtro por tipo
   if (filters.type) {
-    query = query.where('type', '==', filters.type);
+    transactions = transactions.filter(t => t.type === filters.type);
   }
 
-  // Category filter
+  // filtro por categoria
   if (filters.category) {
-    query = query.where('category', '==', filters.category.toLowerCase());
+    transactions = transactions.filter(t => t.category === filters.category);
   }
 
-  query = query.orderBy('date', 'desc');
-
-  if (filters.limit) {
-    query = query.limit(filters.limit);
-  }
-
-  const snapshot = await query.get();
-  return snapshot.docs.map((doc) => ({ id: doc.id, ...doc.data() }));
+  return transactions;
 }
 
 /**
