@@ -879,42 +879,56 @@ const ADMIN_PASS  = 'gui85lo26';
   const db = firebase.firestore();
   window.db = db;
 
-// ✅ LOCAL é o padrão no browser — NÃO chamar setPersistence para evitar disparo duplo
-
 // Oculta tudo — loading-screen é o único visível inicialmente
 document.getElementById('auth-screen').style.display = 'none';
 document.getElementById('app').style.display = 'none';
 
-auth.onAuthStateChanged(async (user) => {
-
-  // Sempre oculta loading na primeira (e única) resposta
-  document.getElementById('loading-screen').style.display = 'none';
-
-  if (user) {
+// ✅ Verifica sessão salva localmente — abre app IMEDIATAMENTE sem esperar Firebase
+const cachedUser = localStorage.getItem('af_session');
+if (cachedUser) {
+  try {
+    const parsed = JSON.parse(cachedUser);
+    state.user = parsed;
+    state.isAdmin = parsed.isAdmin || false;
+    document.getElementById('loading-screen').style.display = 'none';
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
+    loadUserData().then(() => { startRealtimeSync(); bootApp(); }).catch(console.error);
+  } catch(e) {
+    localStorage.removeItem('af_session');
+  }
+} else {
+  document.getElementById('loading-screen').style.display = 'none';
+  document.getElementById('auth-screen').style.display = 'flex';
+}
 
+// Firebase confirma/atualiza em segundo plano
+auth.onAuthStateChanged(async (user) => {
+  if (user) {
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
-    state.user = {
+    const userData = {
       uid: user.uid, id: user.uid, email: user.email,
       name: user.displayName, isAdmin: isAdminUser, isPro: isAdminUser
     };
+    // ✅ Salva sessão localmente para o próximo reload
+    localStorage.setItem('af_session', JSON.stringify(userData));
+
+    state.user = userData;
     state.isAdmin = isAdminUser;
 
-    try {
-      console.log("DENTRO DO BOOT:", state.user);
-      await loadUserData();
-      startRealtimeSync();
-      bootApp();
-    } catch (e) {
-      console.error("Erro ao carregar dados:", e);
+    // Se o app ainda não estava aberto (primeiro login), abre agora
+    if (document.getElementById('app').style.display === 'none') {
+      document.getElementById('loading-screen').style.display = 'none';
+      document.getElementById('auth-screen').style.display = 'none';
+      document.getElementById('app').style.display = 'block';
+      try {
+        await loadUserData();
+        startRealtimeSync();
+        bootApp();
+      } catch(e) { console.error(e); }
     }
-
-  } else {
-    console.log("🚪 Sem sessão");
-    document.getElementById('auth-screen').style.display = 'flex';
-    document.getElementById('app').style.display = 'none';
   }
+  // ❌ null é ignorado — só deslogamos pelo botão Sair
 });
 </script>
 
@@ -1184,6 +1198,7 @@ function doGoogleLogin(){
 }
 function showAuthErr(el,msg){el.textContent=msg;el.style.display='block';}
 function doLogout(){
+  localStorage.removeItem('af_session');
   auth.signOut().catch(()=>{});
   localStorage.removeItem('af_user');
   state.user=null; state.isAdmin=false;
