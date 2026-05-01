@@ -294,6 +294,21 @@ tr:hover td{background:var(--bg);}
 </head>
 <body>
 
+  <!-- Tela de loading enquanto Firebase restaura sessão -->
+<div id="loading-screen" style="
+  display:flex; align-items:center; justify-content:center;
+  min-height:100vh; background:linear-gradient(135deg,#6C63FF 0%,#a855f7 100%);
+  flex-direction:column; gap:16px; color:#fff; font-family:'Segoe UI',sans-serif;
+">
+  <div style="font-size:48px;">🔥</div>
+  <div style="font-size:20px; font-weight:700;">Carregando...</div>
+  <div style="width:40px;height:4px;background:rgba(255,255,255,0.4);border-radius:99px;overflow:hidden;">
+    <div style="width:100%;height:100%;background:#fff;animation:slide 1s infinite alternate;border-radius:99px;"></div>
+  </div>
+  <style>@keyframes slide{from{transform:translateX(-100%)}to{transform:translateX(100%)}}</style>
+</div>
+
+
 <!-- AUTH -->
 <div id="auth-screen" style="display:none;">
   <div class="auth-card">
@@ -865,54 +880,48 @@ const ADMIN_PASS  = 'gui85lo26';
   window.db = db;
 
 // 🔥 Garante sessão persistente mesmo após atualizar a página
-  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
 
-  // 🔥 AGORA pode usar
+// Oculta tudo até Firebase responder
 document.getElementById('auth-screen').style.display = 'none';
 document.getElementById('app').style.display = 'none';
 
+let authInitialized = false; // ← flag para evitar flash
+
 auth.onAuthStateChanged(async (user) => {
 
+  // Oculta loading na primeira resposta
+  if (!authInitialized) {
+    authInitialized = true;
+    document.getElementById('loading-screen').style.display = 'none';
+  }
 
-  if(user){
+  if (user) {
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
-
     state.user = {
-      uid: user.uid,
-      id: user.uid,
-      email: user.email,
-      name: user.displayName,
-      isAdmin: isAdminUser,
-      isPro: isAdminUser
+      uid: user.uid, id: user.uid, email: user.email,
+      name: user.displayName, isAdmin: isAdminUser, isPro: isAdminUser
     };
-
     state.isAdmin = isAdminUser;
 
-    console.log("🔥 Login restaurado:", user.email);
-
-    // ✅ MOSTRA APP
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
 
     try {
-
       console.log("ANTES DO BOOT:", state.user);
       await loadUserData();
       startRealtimeSync();
       bootApp();
+      await carregarTransacoesBot();
     } catch (e) {
       console.error("Erro ao carregar dados:", e);
     }
 
   } else {
-
     console.log("🚪 Sem sessão");
-
-    // ✅ MOSTRA LOGIN
     document.getElementById('auth-screen').style.display = 'flex';
     document.getElementById('app').style.display = 'none';
   }
-
 });
 </script>
 
@@ -2727,7 +2736,6 @@ async function carregarTransacoesBot() {
   renderTransactions();
 }
 
-carregarTransacoesBot();
 </script>
 
 <script>
