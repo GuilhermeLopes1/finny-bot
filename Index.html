@@ -382,6 +382,7 @@ tr:hover td{background:var(--bg);}
       <div class="nav-item" data-page="categories" onclick="navigate('categories')"><span class="nav-icon">🏷️</span> Categorias</div>
       <div class="nav-item" data-page="import" onclick="navigate('import')"><span class="nav-icon">🤖</span> Importar Fatura <span class="pro-tag">PRO</span></div>
       <div class="nav-item hidden" data-page="admin" id="admin-nav-item" onclick="navigate('admin')"><span class="nav-icon">⚙️</span> Painel Admin</div>
+      <div class="nav-item" data-page="bot" onclick="navigate('bot')"><span class="nav-icon">🤖</span> WhatsApp Bot</div>
     </div>
     <div class="sidebar-footer">
       <div class="avatar" id="user-avatar" onclick="openProfileModal()" title="Ver perfil">U</div>
@@ -615,6 +616,40 @@ tr:hover td{background:var(--bg);}
           </div>
         </div>
       </div>
+
+      <div class="page" id="page-bot">
+  <div class="card" style="text-align:center; padding:40px;">
+
+    <div style="font-size:60px;">🤖</div>
+
+    <h2>Fale com o FinnyBot</h2>
+
+    <p style="color:var(--muted); margin:10px 0 20px;">
+      Envie suas despesas direto pelo WhatsApp
+    </p>
+
+    <!-- BOTÃO -->
+    <a id="whatsapp-link" target="_blank" class="btn btn-success">
+      📱 Abrir WhatsApp
+    </a>
+
+    <!-- NÚMERO -->
+    <p id="bot-number" style="font-size:13px; margin-top:12px; font-weight:600;">
+      +1 (415) 523-8886
+    </p>
+
+    <!-- EXEMPLO -->
+    <p style="font-size:12px; color:var(--muted); margin-top:10px;">
+      Ex: "gastei 50 no mercado"
+    </p>
+
+    <!-- AVISO -->
+    <p style="font-size:11px; color:var(--muted); margin-top:6px;">
+      Bot internacional (WhatsApp dos EUA)
+    </p>
+
+  </div>
+</div>
 
     </div><!-- /content -->
   </div><!-- /main -->
@@ -916,6 +951,19 @@ auth.onAuthStateChanged(async (user) => {
     document.getElementById('app').style.display = 'none';
   }
 });
+</script>
+
+<script>
+
+function renderBotPage(){
+  const phone = "14155238886";
+  const msg = encodeURIComponent("Oi, quero usar o FinnyBot");
+
+  const link = `https://wa.me/${phone}?text=${msg}`;
+
+  document.getElementById("whatsapp-link").href = link;
+}
+
 </script>
 
 
@@ -1296,7 +1344,7 @@ function hasAccess(){
 // ═══════════════════════════════════════════════════
 //  NAVIGATION
 // ═══════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',transactions:'Transações',banks:'Contas Bancárias',cards:'Cartões de Crédito',goals:'Metas',reports:'Relatórios',categories:'Categorias',import:'Importar Fatura',admin:'Painel Admin'};
+const PAGE_TITLES={dashboard:'Dashboard',transactions:'Transações',banks:'Contas Bancárias',cards:'Cartões de Crédito',goals:'Metas',reports:'Relatórios',categories:'Categorias',import:'Importar Fatura',admin:'Painel Admin',bot:'FinnyBot'};
 function navigate(page){
   if(page==='admin'&&!state.isAdmin) return;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -1307,7 +1355,7 @@ function navigate(page){
   if(navEl)navEl.classList.add('active');
   document.getElementById('page-title').textContent=PAGE_TITLES[page]||page;
   state.currentPage=page; closeSidebar();
-  const renderMap={dashboard:renderDashboard,transactions:renderTransactions,banks:renderBanks,cards:renderCards,goals:renderGoals,reports:renderReports,categories:renderCategories,import:renderImport,admin:renderAdmin};
+  const renderMap={dashboard:renderDashboard,transactions:renderTransactions,banks:renderBanks,cards:renderCards,goals:renderGoals,reports:renderReports,categories:renderCategories,import:renderImport,admin:renderAdmin,bot:renderBotPage};
   if(renderMap[page])renderMap[page]();
 }
 
