@@ -891,7 +891,6 @@ auth.onAuthStateChanged((user) => {
     document.getElementById('app').style.display = 'block';
 
     bootApp();
-    startRealtimeSync();
 
   } else {
 
@@ -1171,6 +1170,7 @@ function doGoogleLogin(){
 }
 function showAuthErr(el,msg){el.textContent=msg;el.style.display='block';}
 function doLogout(){
+  auth.signOut().catch(()=>{});
   localStorage.removeItem('af_user');
   state.user=null; state.isAdmin=false;
   state.transactions=[]; state.categories=[]; state.goals=[]; state.banks=[]; state.cards=[];
@@ -1607,7 +1607,7 @@ function renderTransactions(){
           ${t.type==='income'?'+':'-'}${fmtBRL(t.amount)}
         </td>
         <td><button class="icon-btn" onclick="deleteTransaction('${t.id}')">🗑️</button></td>
-        <td><button onclick="abrirEdicao('${tx.id}', '${tx.description}', ${tx.amount}, '${tx.category}', '${tx.type}')"><button onclick="abrirEdicao('${tx.id}', '${tx.description}', ${tx.amount}, '${tx.category}', '${tx.type}')">✏️ Editar</button>️ Editar</button></td>
+        <td><button class="icon-btn" onclick="abrirEdicao('${t.id}','${escHtml(t.description||t.desc||'')}',${t.amount},'${escHtml(t.category||'')}','${t.type}')">✏️</button></td>
       </tr>
     `;
   }).join('');
@@ -1709,7 +1709,7 @@ function saveTransaction(){
   if(!date){toast('Informe a data.');return;}
   const lim=state.settings.txLimit;
   if(lim>0&&!isPremium()&&state.transactions.length>=lim){openUpgradeModal();toast('Limite atingido. Faça upgrade para Pro!');return;}
-  const tx={id:uid(),desc,amount,date,type:state.txType,category:cat,bankId,cardId,status:'paid'};
+  const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,status:'paid'};
   state.transactions.push(tx);
   if(cardId&&state.txType==='expense'){const c=state.cards.find(c=>c.id===cardId);if(c)c.used=(c.used||0)+amount;}
   save();closeModal('modal-transaction');toast('Transação adicionada! ✅');
