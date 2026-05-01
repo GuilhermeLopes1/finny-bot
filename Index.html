@@ -882,21 +882,24 @@ const ADMIN_PASS  = 'gui85lo26';
 // 🔥 Garante sessão persistente mesmo após atualizar a página
 auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
 
-// Oculta tudo até Firebase responder
+// Oculta tudo — loading-screen é o único visível inicialmente
 document.getElementById('auth-screen').style.display = 'none';
 document.getElementById('app').style.display = 'none';
 
-let authInitialized = false; // ← flag para evitar flash
+let userConfirmed = false;      // true quando Firebase confirmar sessão ativa
+let loginTimer = null;          // timer para mostrar login se realmente não houver sessão
 
 auth.onAuthStateChanged(async (user) => {
 
-  // Oculta loading na primeira resposta
-  if (!authInitialized) {
-    authInitialized = true;
-    document.getElementById('loading-screen').style.display = 'none';
-  }
-
   if (user) {
+    // ✅ Sessão ativa — cancela timer de login e mostra o app
+    userConfirmed = true;
+    clearTimeout(loginTimer);
+
+    document.getElementById('loading-screen').style.display = 'none';
+    document.getElementById('auth-screen').style.display = 'none';
+    document.getElementById('app').style.display = 'block';
+
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
     state.user = {
       uid: user.uid, id: user.uid, email: user.email,
@@ -904,23 +907,28 @@ auth.onAuthStateChanged(async (user) => {
     };
     state.isAdmin = isAdminUser;
 
-    document.getElementById('auth-screen').style.display = 'none';
-    document.getElementById('app').style.display = 'block';
-
     try {
-      console.log("ANTES DO BOOT:", state.user);
+      console.log("DENTRO DO BOOT:", state.user);
       await loadUserData();
       startRealtimeSync();
       bootApp();
-      await carregarTransacoesBot();
     } catch (e) {
       console.error("Erro ao carregar dados:", e);
     }
 
   } else {
-    console.log("🚪 Sem sessão");
-    document.getElementById('auth-screen').style.display = 'flex';
-    document.getElementById('app').style.display = 'none';
+    // ⏳ Firebase disparou null — pode ser temporário (lendo IndexedDB)
+    // Só mostra login após 2.5s sem confirmação de sessão
+    if (!userConfirmed) {
+      loginTimer = setTimeout(() => {
+        if (!userConfirmed) {
+          console.log("🚪 Sem sessão confirmada");
+          document.getElementById('loading-screen').style.display = 'none';
+          document.getElementById('auth-screen').style.display = 'flex';
+          document.getElementById('app').style.display = 'none';
+        }
+      }, 2500);
+    }
   }
 });
 </script>
