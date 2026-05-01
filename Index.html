@@ -868,19 +868,23 @@ const ADMIN_PASS  = 'gui85lo26';
   auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
 
   // 🔥 AGORA pode usar
-auth.onAuthStateChanged((user) => {
+document.getElementById('auth-screen').style.display = 'none';
+document.getElementById('app').style.display = 'none';
+
+auth.onAuthStateChanged(async (user) => {
+
 
   if(user){
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
 
     state.user = {
+      uid: user.uid,
       id: user.uid,
       email: user.email,
       name: user.displayName,
       isAdmin: isAdminUser,
       isPro: isAdminUser
     };
-
 
     state.isAdmin = isAdminUser;
 
@@ -890,7 +894,15 @@ auth.onAuthStateChanged((user) => {
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
 
-    bootApp();
+    try {
+
+      console.log("ANTES DO BOOT:", state.user);
+      await loadUserData();
+      startRealtimeSync();
+      bootApp();
+    } catch (e) {
+      console.error("Erro ao carregar dados:", e);
+    }
 
   } else {
 
@@ -1188,6 +1200,9 @@ document.getElementById('login-password').addEventListener('keydown',e=>{if(e.ke
 //  BOOT
 // ═══════════════════════════════════════════════════
 async function bootApp(){
+
+    console.log("DENTRO DO BOOT:", state.user);
+
   document.getElementById('auth-screen').style.display='none';
   document.getElementById('app').style.display='block';
 
