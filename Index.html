@@ -879,56 +879,42 @@ const ADMIN_PASS  = 'gui85lo26';
   const db = firebase.firestore();
   window.db = db;
 
+// ✅ LOCAL é o padrão no browser — NÃO chamar setPersistence para evitar disparo duplo
+
 // Oculta tudo — loading-screen é o único visível inicialmente
 document.getElementById('auth-screen').style.display = 'none';
 document.getElementById('app').style.display = 'none';
 
-// ✅ Verifica sessão salva localmente — abre app IMEDIATAMENTE sem esperar Firebase
-const cachedUser = localStorage.getItem('af_session');
-if (cachedUser) {
-  try {
-    const parsed = JSON.parse(cachedUser);
-    state.user = parsed;
-    state.isAdmin = parsed.isAdmin || false;
-    document.getElementById('loading-screen').style.display = 'none';
+auth.onAuthStateChanged(async (user) => {
+
+  // Sempre oculta loading na primeira (e única) resposta
+  document.getElementById('loading-screen').style.display = 'none';
+
+  if (user) {
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
-    loadUserData().then(() => { startRealtimeSync(); bootApp(); }).catch(console.error);
-  } catch(e) {
-    localStorage.removeItem('af_session');
-  }
-} else {
-  document.getElementById('loading-screen').style.display = 'none';
-  document.getElementById('auth-screen').style.display = 'flex';
-}
 
-// Firebase confirma/atualiza em segundo plano
-auth.onAuthStateChanged(async (user) => {
-  if (user) {
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
-    const userData = {
+    state.user = {
       uid: user.uid, id: user.uid, email: user.email,
       name: user.displayName, isAdmin: isAdminUser, isPro: isAdminUser
     };
-    // ✅ Salva sessão localmente para o próximo reload
-    localStorage.setItem('af_session', JSON.stringify(userData));
-
-    state.user = userData;
     state.isAdmin = isAdminUser;
 
-    // Se o app ainda não estava aberto (primeiro login), abre agora
-    if (document.getElementById('app').style.display === 'none') {
-      document.getElementById('loading-screen').style.display = 'none';
-      document.getElementById('auth-screen').style.display = 'none';
-      document.getElementById('app').style.display = 'block';
-      try {
-        await loadUserData();
-        startRealtimeSync();
-        bootApp();
-      } catch(e) { console.error(e); }
+    try {
+      console.log("DENTRO DO BOOT:", state.user);
+      await loadUserData();
+      startRealtimeSync();
+      bootApp();
+    } catch (e) {
+      console.error("Erro ao carregar dados:", e);
     }
+
+  } else {
+    console.log("🚪 Sem sessão");
+    document.getElementById('auth-screen').style.display = 'flex';
+    document.getElementById('app').style.display = 'none';
   }
-  // ❌ null é ignorado — só deslogamos pelo botão Sair
 });
 </script>
 
@@ -1133,8 +1119,7 @@ function switchAuthTab(tab){
   document.getElementById('auth-register').classList.toggle('active',tab==='register');
 }
 
-// 🔥 LOGIN NORMAL
-function doLogin(){
+async function doLogin(){
   const email = document.getElementById('login-email').value.trim().toLowerCase();
   const pass = document.getElementById('login-password').value;
   const errEl = document.getElementById('auth-error-login');
@@ -1146,59 +1131,66 @@ function doLogin(){
     return;
   }
 
-  // 👑 ADMIN MANUAL (único caso sem Firebase)
-  if(email === ADMIN_EMAIL && pass === ADMIN_PASS){
-    state.user = {
-      id: 'admin',
-      email: ADMIN_EMAIL,
-      name: 'Administrador',
-      isAdmin: true,
-      isPro: true
-    };
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
 
-    state.isAdmin = true;
+    await auth.signInWithEmailAndPassword(email, pass);
 
-    bootApp();
+  } catch (e) {
+    console.error(e);
+    showAuthErr(errEl,'Erro ao fazer login.');
+  }
+}
+async function doRegister(){
+  const name = document.getElementById('reg-name').value.trim();
+  const email = document.getElementById('reg-email').value.trim().toLowerCase();
+  const pass = document.getElementById('reg-password').value;
+  const errEl = document.getElementById('auth-error-reg');
+  const okEl = document.getElementById('auth-success-reg');
+
+  errEl.style.display = 'none';
+  okEl.style.display = 'none';
+
+  if(!name || !email || !pass){
+    showAuthErr(errEl,'Preencha todos os campos.');
     return;
-  }  
+  }
 
-  showAuthErr(errEl,'Use login com Google.');
-}
-function doRegister(){
-  const name=document.getElementById('reg-name').value.trim();
-  const email=document.getElementById('reg-email').value.trim().toLowerCase();
-  const pass=document.getElementById('reg-password').value;
-  const errEl=document.getElementById('auth-error-reg');
-  const okEl=document.getElementById('auth-success-reg');
-  errEl.style.display='none'; okEl.style.display='none';
-  if(!name||!email||!pass){showAuthErr(errEl,'Preencha todos os campos.');return;}
-  if(pass.length<6){showAuthErr(errEl,'Senha deve ter ao menos 6 caracteres.');return;}
-  if(email===ADMIN_EMAIL){showAuthErr(errEl,'E-mail não disponível.');return;}
-  const users=getUsers();
-  if(users.find(u=>u.email===email)){showAuthErr(errEl,'E-mail já cadastrado.');return;}
-  const newUser={id:uid(),email,name,pass,plan:'free',isAdmin:false,isPro:false ,createdAt:new Date().toISOString()};
-  users.push(newUser); saveUsers(users);
-  okEl.textContent='Conta criada! Fazendo login...'; okEl.style.display='block';
-  setTimeout(()=>{state.user=newUser;state.isAdmin=false;localStorage.setItem('af_user',JSON.stringify(newUser));bootApp();},1000);
-}
-function doGoogleLogin(){
-  const provider = new firebase.auth.GoogleAuthProvider();
+  if(pass.length < 6){
+    showAuthErr(errEl,'Senha deve ter ao menos 6 caracteres.');
+    return;
+  }
 
-  auth.signOut().then(() => {
-    provider.setCustomParameters({
-      prompt: 'select_account'
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+    const userCredential = await auth.createUserWithEmailAndPassword(email, pass);
+
+    await userCredential.user.updateProfile({
+      displayName: name
     });
 
-    auth.signInWithPopup(provider)
-      .catch((error) => {
-        console.error(error);
-        document.getElementById('auth-error-login').textContent = "Erro ao logar com Google";
-      });
-  });
+    okEl.textContent = 'Conta criada com sucesso!';
+    okEl.style.display = 'block';
+
+  } catch (e) {
+    console.error(e);
+    showAuthErr(errEl,'Erro ao criar conta.');
+  }
+}
+async function doGoogleLogin(){
+  try {
+    await auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL);
+
+    const provider = new firebase.auth.GoogleAuthProvider();
+    await auth.signInWithPopup(provider);
+
+  } catch (error) {
+    console.error(error);
+  }
 }
 function showAuthErr(el,msg){el.textContent=msg;el.style.display='block';}
 function doLogout(){
-  localStorage.removeItem('af_session');
   auth.signOut().catch(()=>{});
   localStorage.removeItem('af_user');
   state.user=null; state.isAdmin=false;
