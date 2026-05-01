@@ -864,6 +864,9 @@ const ADMIN_PASS  = 'gui85lo26';
   const db = firebase.firestore();
   window.db = db;
 
+// 🔥 Garante sessão persistente mesmo após atualizar a página
+  auth.setPersistence(firebase.auth.Auth.Persistence.LOCAL).catch(()=>{});
+
   // 🔥 AGORA pode usar
 auth.onAuthStateChanged((user) => {
 
@@ -1071,6 +1074,22 @@ async function loadUserData(){
 
 function getUsers(){return JSON.parse(localStorage.getItem('af_users')||'[]');}
 function saveUsers(arr){localStorage.setItem('af_users',JSON.stringify(arr));}
+
+async function save() {
+  if (!state.user) return;
+  try {
+    await db.collection("users").doc(state.user.id).set({
+      transactions: state.transactions,
+      banks:        state.banks,
+      cards:        state.cards,
+      categories:   state.categories,
+      goals:        state.goals,
+    }, { merge: true });
+  } catch(e) {
+    console.error("❌ Erro ao salvar:", e);
+    toast("❌ Erro ao salvar. Tente novamente.");
+  }
+}
 
 // Delete all data for a user
 function purgeUserData(userId){
