@@ -940,6 +940,80 @@ tr:hover td{background:#F5F6FC;}
   line-height:1.6;
 }
 
+/* ===== MÓDULO DÍVIDAS ===== */
+.debt-grid {
+  display: grid;
+  grid-template-columns: repeat(auto-fill, minmax(300px, 1fr));
+  gap: 16px;
+  margin-top: 20px;
+}
+.debt-card {
+  background: var(--card);
+  border-radius: 18px;
+  padding: 20px 22px;
+  box-shadow: 0 2px 16px rgba(0,0,0,.07);
+  border: 1px solid var(--border);
+  transition: transform .2s, box-shadow .2s;
+  position: relative;
+  overflow: hidden;
+}
+.debt-card:hover { transform: translateY(-2px); box-shadow: 0 8px 28px rgba(0,0,0,.11); }
+.debt-card-header {
+  display: flex; align-items: center; justify-content: space-between;
+  margin-bottom: 14px;
+}
+.debt-card-name {
+  font-size: 16px; font-weight: 800; color: var(--text);
+  display: flex; align-items: center; gap: 8px;
+}
+.debt-card-actions { display: flex; gap: 6px; }
+.debt-info-row {
+  display: grid; grid-template-columns: 1fr 1fr 1fr;
+  gap: 10px; margin-bottom: 14px;
+}
+.debt-info-item { text-align: center; }
+.debt-info-label {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: 3px;
+}
+.debt-info-value { font-size: 14px; font-weight: 800; color: var(--text); }
+.debt-info-value.red { color: var(--danger); }
+.debt-info-value.green { color: var(--success); }
+.debt-info-value.purple { color: var(--primary); }
+.debt-progress-wrap { margin-top: 6px; }
+.debt-progress-label {
+  display: flex; justify-content: space-between;
+  font-size: 11px; font-weight: 700; color: var(--muted); margin-bottom: 5px;
+}
+.debt-progress-bar {
+  height: 10px; background: var(--border); border-radius: 99px; overflow: hidden;
+}
+.debt-progress-fill {
+  height: 100%;
+  background: linear-gradient(90deg, var(--primary), #a855f7);
+  border-radius: 99px;
+  transition: width .6s cubic-bezier(.4,0,.2,1);
+}
+.debt-installment-badge {
+  position: absolute; top: 14px; right: 14px;
+  background: var(--primary-light); color: var(--primary);
+  font-size: 10px; font-weight: 800;
+  padding: 3px 9px; border-radius: 20px;
+  pointer-events: none;
+}
+/* Resumo de dívidas no dashboard */
+.debt-summary-grid {
+  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+}
+.debt-summary-item { text-align: center; padding: 12px 8px; }
+.debt-summary-label {
+  font-size: 10px; font-weight: 700; color: var(--muted);
+  text-transform: uppercase; letter-spacing: .04em; margin-bottom: 4px;
+}
+.debt-summary-value { font-size: 18px; font-weight: 900; }
+/* Dark mode para dívidas */
+body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a45 !important; }
+
 /* Fundo suave no card de tendências quando vazio */
 .card .empty-state{
   background:var(--bg);
@@ -1192,6 +1266,7 @@ tr:hover td{background:#F5F6FC;}
       <div class="nav-item" data-page="banks" onclick="navigate('banks')"><span class="nav-icon">🏦</span> Contas Bancárias</div>
       <div class="nav-item" data-page="cards" onclick="navigate('cards')"><span class="nav-icon">💳</span> Cartões de Crédito</div>
       <div class="nav-item" data-page="goals" onclick="navigate('goals')"><span class="nav-icon">🎯</span> Metas</div>
+      <div class="nav-item" data-page="debts" onclick="navigate('debts')"><span class="nav-icon">🏦</span> Dívidas</div>
       <div class="nav-section">Análise</div>
       <div class="nav-item" data-page="reports" onclick="navigate('reports')"><span class="nav-icon">📈</span> Relatórios</div>
       <div class="nav-section">Config</div>
@@ -1339,6 +1414,16 @@ tr:hover td{background:#F5F6FC;}
             <div id="dash-recent-list"></div>
           </div>
         </div>
+
+        <!-- RESUMO DÍVIDAS NO DASHBOARD -->
+<div class="card mt-16" id="dash-debts-card" style="display:none;margin-top:16px">
+  <div class="card-header">
+    <span class="card-title">💳 Resumo de Dívidas</span>
+    <button class="btn btn-xs btn-outline" onclick="navigate('debts')">Ver todas</button>
+  </div>
+  <div id="dash-debts-content"></div>
+</div>
+
       </div>
 
       <!-- TRANSACTIONS -->
@@ -1402,7 +1487,35 @@ tr:hover td{background:#F5F6FC;}
         <div id="goals-locked" class="hidden"></div>
       </div>
 
-   
+   <!-- DÍVIDAS -->
+<div class="page" id="page-debts">
+  <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+    <div>
+      <h2 style="font-size:20px;font-weight:900;color:var(--text)">💳 Dívidas & Financiamentos</h2>
+      <p style="font-size:13px;color:var(--muted);margin-top:2px">Acompanhe e gerencie suas dívidas</p>
+    </div>
+    <button class="btn btn-primary" onclick="openDebtModal()">＋ Nova Dívida</button>
+  </div>
+
+  <!-- Resumo rápido -->
+  <div class="card mb-16" id="debts-summary-card" style="display:none">
+    <div class="card-header"><span class="card-title">📊 Visão Geral das Dívidas</span></div>
+    <div class="debt-summary-grid" id="debts-summary"></div>
+    <div style="margin-top:14px">
+      <div class="debt-progress-label">
+        <span id="debt-global-pct-label">Progresso geral</span>
+        <span id="debt-global-pct">0%</span>
+      </div>
+      <div class="debt-progress-bar"><div class="debt-progress-fill" id="debt-global-fill" style="width:0%"></div></div>
+    </div>
+  </div>
+
+  <div class="debt-grid" id="debts-list"></div>
+  <div class="empty-state hidden" id="debts-empty">
+    <div class="emoji">💳</div>
+    <p>Nenhuma dívida cadastrada.<br>Adicione a primeira!</p>
+  </div>
+</div>
 
 <!-- NOVO -->
       <div class="page" id="page-reports">
@@ -1791,6 +1904,60 @@ tr:hover td{background:#F5F6FC;}
   </div>
 </div>
 
+<!-- MODAL DÍVIDA -->
+<div class="modal-backdrop hidden" id="debt-modal-backdrop" onclick="closeDebtModal()"></div>
+<div class="modal hidden" id="debt-modal" style="max-width:500px">
+  <div class="modal-header">
+    <span class="modal-title" id="debt-modal-title">Nova Dívida</span>
+    <button class="modal-close" onclick="closeDebtModal()">✕</button>
+  </div>
+  <div class="form-group">
+    <label>Nome da Dívida *</label>
+    <input id="debt-name" placeholder="ex: Financiamento Casa, Carro...">
+  </div>
+  <div class="form-group">
+    <label>Ícone</label>
+    <select id="debt-icon">
+      <option value="🏠">🏠 Casa</option>
+      <option value="🚗">🚗 Carro</option>
+      <option value="💰">💰 Empréstimo</option>
+      <option value="📱">📱 Celular</option>
+      <option value="🎓">🎓 Educação</option>
+      <option value="🏥">🏥 Saúde</option>
+      <option value="💳">💳 Crédito</option>
+      <option value="📦">📦 Outro</option>
+    </select>
+  </div>
+  <div class="grid-2">
+    <div class="form-group">
+      <label>Valor Total da Dívida *</label>
+      <input id="debt-total" type="number" min="0" step="0.01" placeholder="0,00">
+    </div>
+    <div class="form-group">
+      <label>Valor Já Pago</label>
+      <input id="debt-paid" type="number" min="0" step="0.01" placeholder="0,00" value="0">
+    </div>
+  </div>
+  <div class="grid-2">
+    <div class="form-group">
+      <label>Parcela Mensal *</label>
+      <input id="debt-installment" type="number" min="0" step="0.01" placeholder="0,00">
+    </div>
+    <div class="form-group">
+      <label>Qtd. de Parcelas</label>
+      <input id="debt-installments-total" type="number" min="0" placeholder="ex: 60">
+    </div>
+  </div>
+  <div class="form-group">
+    <label>Data de Início</label>
+    <input id="debt-start-date" type="date">
+  </div>
+  <div style="display:flex;gap:10px;margin-top:6px">
+    <button class="btn btn-outline btn-block" onclick="closeDebtModal()">Cancelar</button>
+    <button class="btn btn-primary btn-block" onclick="saveDebt()">Salvar Dívida</button>
+  </div>
+</div>
+
 <!-- Upgrade Modal -->
 <div class="modal-overlay" id="modal-upgrade">
   <div class="modal" style="max-width:420px;text-align:center;">
@@ -1901,6 +2068,9 @@ const isAdminUser = userDoc.data()?.role === 'admin';
 });
 </script>
 
+
+
+
 <script>
 
 function renderBotPage(){
@@ -1970,6 +2140,7 @@ db.collection("users")
     state.transactions = data.transactions || [];
     state.categories = data.categories || [];
     state.goals = data.goals || [];
+    state.debts = data.debts || [];
 
     console.log("⚡ atualização em tempo real");
 
@@ -2042,7 +2213,7 @@ const DEFAULT_CATEGORIES_FACTORY = () => [
 // ═══════════════════════════════════════════════════
 let state = {
   user:null, isAdmin:false,
-  transactions:[], categories:[], goals:[], banks:[], cards:[],
+  transactions:[], categories:[], goals:[], banks:[], cards:[], debts:[],
   settings:{
   appName:'Allo Finanças',
   primaryColor:'#6C63FF'
@@ -2125,6 +2296,7 @@ async function loadUserData() {
       state.transactions = data.transactions || [];
       state.categories   = data.categories || [];
       state.goals        = data.goals || [];
+      state.debts = data.debts || [];
       state.user.isPro   = data.isPro === true;
 
       console.log("Dados carregados com sucesso");
@@ -2142,12 +2314,13 @@ function saveUsers(arr){localStorage.setItem('af_users',JSON.stringify(arr));}
 async function save() {
   if (!state.user) return;
   try {
-    await db.collection("users").doc(state.user.id).set({
+await db.collection("users").doc(state.user.id).set({
       transactions: state.transactions,
       banks:        state.banks,
       cards:        state.cards,
       categories:   state.categories,
       goals:        state.goals,
+      debts:        state.debts,
     }, { merge: true });
   } catch(e) {
     console.error("❌ Erro ao salvar:", e);
@@ -2264,7 +2437,7 @@ function doLogout(){
   auth.signOut().catch(()=>{});
   localStorage.removeItem('af_user');
   state.user=null; state.isAdmin=false;
-  state.transactions=[]; state.categories=[]; state.goals=[]; state.banks=[]; state.cards=[];
+  state.transactions=[]; state.categories=[]; state.goals=[]; state.banks=[]; state.cards=[]; state.debts=[];
   if(chartIncomeExpense){chartIncomeExpense.destroy();chartIncomeExpense=null;}
   if(chartCategories){chartCategories.destroy();chartCategories=null;}
   if(chartReports){chartReports.destroy();chartReports=null;}
@@ -2433,7 +2606,7 @@ function hasAccess(){
 // ═══════════════════════════════════════════════════
 //  NAVIGATION
 // ═══════════════════════════════════════════════════
-const PAGE_TITLES={dashboard:'Dashboard',transactions:'Transações',banks:'Contas Bancárias',cards:'Cartões de Crédito',goals:'Metas',reports:'Relatórios',categories:'Categorias',import:'Importar Fatura',admin:'Painel Admin',bot:'FinnyBot'};
+const PAGE_TITLES={dashboard:'Dashboard',transactions:'Transações',banks:'Contas Bancárias',cards:'Cartões de Crédito',goals:'Metas',debts:'Dívidas & Financiamentos',reports:'Relatórios',categories:'Categorias',import:'Importar Fatura',admin:'Painel Admin',bot:'FinnyBot'};
 function navigate(page){
   if(page==='admin'&&!state.isAdmin) return;
   document.querySelectorAll('.page').forEach(p=>p.classList.remove('active'));
@@ -2444,7 +2617,7 @@ function navigate(page){
   if(navEl)navEl.classList.add('active');
   document.getElementById('page-title').textContent=PAGE_TITLES[page]||page;
   state.currentPage=page; closeSidebar();
-  const renderMap={dashboard:renderDashboard,transactions:renderTransactions,banks:renderBanks,cards:renderCards,goals:renderGoals,reports:renderReports,categories:renderCategories,import:renderImport,admin:renderAdmin,bot:renderBotPage};
+const renderMap={dashboard:renderDashboard,transactions:renderTransactions,banks:renderBanks,cards:renderCards,goals:renderGoals,debts:renderDebts,reports:renderReports,categories:renderCategories,import:renderImport,admin:renderAdmin,bot:renderBotPage};
   if(renderMap[page])renderMap[page]();
 }
 
@@ -2492,6 +2665,9 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
   // Balance uses only paid transactions
   let bal=0,inc=0,exp=0,incLast=0,expLast=0;
   let pendingInc=0,pendingExp=0;
+  // Incluir parcelas de dívidas nas despesas do mês
+  const debtMonthlyTotal = (state.debts || []).reduce((s, d) => s + (d.installment || 0), 0);
+  exp += debtMonthlyTotal;
   state.transactions.forEach(t=>{
     const paid=(t.status||'paid')==='paid';
     if(paid){if(t.type==='income')bal+=t.amount;else bal-=t.amount;}
@@ -2557,6 +2733,7 @@ if (pendEl) {
   renderTrends();
   renderDashGoals();
   renderDashRecent();
+  renderDashDebts();
 }
 
 function renderIncomeExpenseChart(){
@@ -4102,6 +4279,9 @@ function openModal(id){document.getElementById(id).classList.add('open');}
 function closeModal(id){document.getElementById(id).classList.remove('open');}
 document.querySelectorAll('.modal-overlay').forEach(o=>{o.addEventListener('click',e=>{if(e.target===o)o.classList.remove('open');});});
 
+
+
+
 // ═══════════════════════════════════════════════════
 //  TOAST
 // ═══════════════════════════════════════════════════
@@ -4211,6 +4391,226 @@ await fetch(`${backendUrl}/register`, {
     console.error("❌ erro ao salvar telefone:", e);
   }
 }
+</script>
+
+<script>
+
+// ═══════════════════════════════════════════════════
+//  MÓDULO DÍVIDAS
+// ═══════════════════════════════════════════════════
+
+function openDebtModal(id = null) {
+  const modal = document.getElementById('debt-modal');
+  const backdrop = document.getElementById('debt-modal-backdrop');
+  modal.classList.remove('hidden');
+  backdrop.classList.remove('hidden');
+
+  if (id) {
+    const d = state.debts.find(x => x.id === id);
+    if (!d) return;
+    document.getElementById('debt-modal-title').textContent = 'Editar Dívida';
+    document.getElementById('debt-name').value = d.name;
+    document.getElementById('debt-icon').value = d.icon || '📦';
+    document.getElementById('debt-total').value = d.total;
+    document.getElementById('debt-paid').value = d.paid;
+    document.getElementById('debt-installment').value = d.installment;
+    document.getElementById('debt-installments-total').value = d.installmentsTotal || '';
+    document.getElementById('debt-start-date').value = d.startDate || '';
+    state.editId = id;
+  } else {
+    document.getElementById('debt-modal-title').textContent = 'Nova Dívida';
+    document.getElementById('debt-name').value = '';
+    document.getElementById('debt-icon').value = '🏠';
+    document.getElementById('debt-total').value = '';
+    document.getElementById('debt-paid').value = '0';
+    document.getElementById('debt-installment').value = '';
+    document.getElementById('debt-installments-total').value = '';
+    document.getElementById('debt-start-date').value = '';
+    state.editId = null;
+  }
+}
+
+function closeDebtModal() {
+  document.getElementById('debt-modal').classList.add('hidden');
+  document.getElementById('debt-modal-backdrop').classList.add('hidden');
+  state.editId = null;
+}
+
+async function saveDebt() {
+  const name = document.getElementById('debt-name').value.trim();
+  const total = parseFloat(document.getElementById('debt-total').value) || 0;
+  const paid = parseFloat(document.getElementById('debt-paid').value) || 0;
+  const installment = parseFloat(document.getElementById('debt-installment').value) || 0;
+  const installmentsTotal = parseInt(document.getElementById('debt-installments-total').value) || null;
+  const startDate = document.getElementById('debt-start-date').value || null;
+  const icon = document.getElementById('debt-icon').value;
+
+  if (!name) { toast('❌ Informe o nome da dívida'); return; }
+  if (total <= 0) { toast('❌ Informe o valor total'); return; }
+  if (installment <= 0) { toast('❌ Informe o valor da parcela'); return; }
+
+  if (state.editId) {
+    const idx = state.debts.findIndex(d => d.id === state.editId);
+    if (idx > -1) {
+      state.debts[idx] = { ...state.debts[idx], name, icon, total, paid, installment, installmentsTotal, startDate };
+    }
+  } else {
+    state.debts.push({
+      id: 'debt_' + Date.now(),
+      name, icon, total, paid, installment, installmentsTotal, startDate,
+      createdAt: new Date().toISOString()
+    });
+  }
+
+  closeDebtModal();
+  await save();
+  renderDebts();
+  if (state.currentPage === 'dashboard') renderDashboard();
+  toast('✅ Dívida salva!');
+}
+
+async function deleteDebt(id) {
+  if (!confirm('Remover esta dívida?')) return;
+  state.debts = state.debts.filter(d => d.id !== id);
+  await save();
+  renderDebts();
+  if (state.currentPage === 'dashboard') renderDashboard();
+  toast('🗑️ Dívida removida');
+}
+
+function renderDebts() {
+  const list = document.getElementById('debts-list');
+  const empty = document.getElementById('debts-empty');
+  const summaryCard = document.getElementById('debts-summary-card');
+  if (!list) return;
+
+  list.innerHTML = '';
+
+  if (!state.debts.length) {
+    empty.classList.remove('hidden');
+    summaryCard.style.display = 'none';
+    return;
+  }
+  empty.classList.add('hidden');
+  summaryCard.style.display = '';
+
+  // Calcular resumo global
+  const totalAll = state.debts.reduce((s, d) => s + d.total, 0);
+  const paidAll  = state.debts.reduce((s, d) => s + d.paid, 0);
+  const restAll  = totalAll - paidAll;
+  const pctAll   = totalAll > 0 ? Math.round((paidAll / totalAll) * 100) : 0;
+  const monthlyAll = state.debts.reduce((s, d) => s + d.installment, 0);
+
+  document.getElementById('debts-summary').innerHTML = `
+    <div class="debt-summary-item">
+      <div class="debt-summary-label">Total em Dívidas</div>
+      <div class="debt-summary-value red">${fmtBRL(totalAll)}</div>
+    </div>
+    <div class="debt-summary-item">
+      <div class="debt-summary-label">Total Pago</div>
+      <div class="debt-summary-value green">${fmtBRL(paidAll)}</div>
+    </div>
+    <div class="debt-summary-item">
+      <div class="debt-summary-label">Restante</div>
+      <div class="debt-summary-value red">${fmtBRL(restAll)}</div>
+    </div>
+    <div class="debt-summary-item">
+      <div class="debt-summary-label">Parcelas/Mês</div>
+      <div class="debt-summary-value purple">${fmtBRL(monthlyAll)}</div>
+    </div>
+  `;
+  document.getElementById('debt-global-pct').textContent = pctAll + '%';
+  document.getElementById('debt-global-fill').style.width = pctAll + '%';
+
+  // Renderizar cards
+  state.debts.forEach(d => {
+    const rest = d.total - d.paid;
+    const pct  = d.total > 0 ? Math.round((d.paid / d.total) * 100) : 0;
+    const card = document.createElement('div');
+    card.className = 'debt-card';
+    card.innerHTML = `
+      <div class="debt-card-header">
+        <div class="debt-card-name">${d.icon || '💳'} ${d.name}</div>
+        <div class="debt-card-actions">
+          <button class="btn btn-xs btn-outline" onclick="openDebtModal('${d.id}')">✏️</button>
+          <button class="btn btn-xs btn-danger" onclick="deleteDebt('${d.id}')">🗑️</button>
+        </div>
+      </div>
+      ${d.installmentsTotal ? `<div class="debt-installment-badge">${d.installmentsTotal}x</div>` : ''}
+      <div class="debt-info-row">
+        <div class="debt-info-item">
+          <div class="debt-info-label">Total</div>
+          <div class="debt-info-value">${fmtBRL(d.total)}</div>
+        </div>
+        <div class="debt-info-item">
+          <div class="debt-info-label">Pago</div>
+          <div class="debt-info-value green">${fmtBRL(d.paid)}</div>
+        </div>
+        <div class="debt-info-item">
+          <div class="debt-info-label">Restante</div>
+          <div class="debt-info-value red">${fmtBRL(rest)}</div>
+        </div>
+      </div>
+      <div class="debt-info-item" style="margin-bottom:12px;background:var(--bg);border-radius:10px;padding:8px 12px;">
+        <div class="debt-info-label">💸 Parcela Mensal</div>
+        <div class="debt-info-value purple" style="font-size:18px">${fmtBRL(d.installment)}</div>
+      </div>
+      <div class="debt-progress-wrap">
+        <div class="debt-progress-label">
+          <span>Progresso: ${pct}% pago</span>
+          <span>${100 - pct}% restante</span>
+        </div>
+        <div class="debt-progress-bar">
+          <div class="debt-progress-fill" style="width:${pct}%"></div>
+        </div>
+      </div>
+    `;
+    list.appendChild(card);
+  });
+}
+
+function renderDashDebts() {
+  const card = document.getElementById('dash-debts-card');
+  const content = document.getElementById('dash-debts-content');
+  if (!card || !content) return;
+  if (!state.debts || !state.debts.length) { card.style.display = 'none'; return; }
+
+  card.style.display = '';
+  const totalAll   = state.debts.reduce((s, d) => s + d.total, 0);
+  const paidAll    = state.debts.reduce((s, d) => s + d.paid, 0);
+  const restAll    = totalAll - paidAll;
+  const pctAll     = totalAll > 0 ? Math.round((paidAll / totalAll) * 100) : 0;
+  const monthlyAll = state.debts.reduce((s, d) => s + d.installment, 0);
+
+  content.innerHTML = `
+    <div class="debt-summary-grid" style="margin-bottom:14px">
+      <div class="debt-summary-item">
+        <div class="debt-summary-label">Total em Dívidas</div>
+        <div class="debt-summary-value" style="font-size:15px;color:var(--danger)">${fmtBRL(totalAll)}</div>
+      </div>
+      <div class="debt-summary-item">
+        <div class="debt-summary-label">Total Pago</div>
+        <div class="debt-summary-value" style="font-size:15px;color:var(--success)">${fmtBRL(paidAll)}</div>
+      </div>
+      <div class="debt-summary-item">
+        <div class="debt-summary-label">Restante</div>
+        <div class="debt-summary-value" style="font-size:15px;color:var(--danger)">${fmtBRL(restAll)}</div>
+      </div>
+      <div class="debt-summary-item">
+        <div class="debt-summary-label">Parcelas/Mês</div>
+        <div class="debt-summary-value" style="font-size:15px;color:var(--primary)">${fmtBRL(monthlyAll)}</div>
+      </div>
+    </div>
+    <div class="debt-progress-label">
+      <span>Progresso geral das dívidas</span>
+      <span style="color:var(--primary);font-weight:800">${pctAll}% pago</span>
+    </div>
+    <div class="debt-progress-bar">
+      <div class="debt-progress-fill" style="width:${pctAll}%"></div>
+    </div>
+  `;
+}
+
 </script>
 
 </body>
