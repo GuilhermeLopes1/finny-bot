@@ -1416,7 +1416,7 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
         </div>
 
         <!-- RESUMO DÍVIDAS NO DASHBOARD -->
-<div class="card mt-16" id="dash-debts-card" style="display:none;margin-top:16px">
+<div class="card" id="dash-debts-card" style="display:none;margin-top:16px">
   <div class="card-header">
     <span class="card-title">💳 Resumo de Dívidas</span>
     <button class="btn btn-xs btn-outline" onclick="navigate('debts')">Ver todas</button>
@@ -1905,12 +1905,12 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
 </div>
 
 <!-- MODAL DÍVIDA -->
-<div class="modal-backdrop hidden" id="debt-modal-backdrop" onclick="closeDebtModal()"></div>
-<div class="modal hidden" id="debt-modal" style="max-width:500px">
-  <div class="modal-header">
-    <span class="modal-title" id="debt-modal-title">Nova Dívida</span>
-    <button class="modal-close" onclick="closeDebtModal()">✕</button>
-  </div>
+<div class="modal-overlay" id="modal-debt">
+  <div class="modal" style="max-width:500px">
+    <div class="modal-header">
+      <h3 id="debt-modal-title">Nova Dívida</h3>
+      <button class="modal-close" onclick="closeModal('modal-debt')">×</button>
+    </div>
   <div class="form-group">
     <label>Nome da Dívida *</label>
     <input id="debt-name" placeholder="ex: Financiamento Casa, Carro...">
@@ -1953,8 +1953,9 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
     <input id="debt-start-date" type="date">
   </div>
   <div style="display:flex;gap:10px;margin-top:6px">
-    <button class="btn btn-outline btn-block" onclick="closeDebtModal()">Cancelar</button>
+    <button class="btn btn-outline btn-block" onclick="closeModal('modal-debt')">Cancelar</button>
     <button class="btn btn-primary btn-block" onclick="saveDebt()">Salvar Dívida</button>
+  </div>
   </div>
 </div>
 
@@ -2665,9 +2666,6 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
   // Balance uses only paid transactions
   let bal=0,inc=0,exp=0,incLast=0,expLast=0;
   let pendingInc=0,pendingExp=0;
-  // Incluir parcelas de dívidas nas despesas do mês
-  const debtMonthlyTotal = (state.debts || []).reduce((s, d) => s + (d.installment || 0), 0);
-  exp += debtMonthlyTotal;
   state.transactions.forEach(t=>{
     const paid=(t.status||'paid')==='paid';
     if(paid){if(t.type==='income')bal+=t.amount;else bal-=t.amount;}
@@ -2680,6 +2678,11 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
       if(paid){if(t.type==='income')incLast+=t.amount;else expLast+=t.amount;}
     }
   });
+
+  // Parcelas de dívidas: somam às despesas e reduzem o saldo
+  const debtMonthlyTotal = (state.debts || []).reduce((s, d) => s + (d.installment || 0), 0);
+  exp += debtMonthlyTotal;
+  bal -= debtMonthlyTotal;
 // Animação dos valores principais
 animateCounter(document.getElementById('stat-balance'), bal);
 animateCounter(document.getElementById('stat-income'), inc);
@@ -4400,10 +4403,7 @@ await fetch(`${backendUrl}/register`, {
 // ═══════════════════════════════════════════════════
 
 function openDebtModal(id = null) {
-  const modal = document.getElementById('debt-modal');
-  const backdrop = document.getElementById('debt-modal-backdrop');
-  modal.classList.remove('hidden');
-  backdrop.classList.remove('hidden');
+  openModal('modal-debt');
 
   if (id) {
     const d = state.debts.find(x => x.id === id);
@@ -4431,8 +4431,7 @@ function openDebtModal(id = null) {
 }
 
 function closeDebtModal() {
-  document.getElementById('debt-modal').classList.add('hidden');
-  document.getElementById('debt-modal-backdrop').classList.add('hidden');
+  closeModal('modal-debt');
   state.editId = null;
 }
 
@@ -4462,7 +4461,8 @@ async function saveDebt() {
     });
   }
 
-  closeDebtModal();
+closeModal('modal-debt');
+  state.editId = null;
   await save();
   renderDebts();
   if (state.currentPage === 'dashboard') renderDashboard();
@@ -4573,7 +4573,12 @@ function renderDashDebts() {
   const card = document.getElementById('dash-debts-card');
   const content = document.getElementById('dash-debts-content');
   if (!card || !content) return;
-  if (!state.debts || !state.debts.length) { card.style.display = 'none'; return; }
+
+  // Esconde se não tiver dívidas
+  if (!state.debts || !state.debts.length) {
+    card.style.display = 'none';
+    return;
+  }
 
   card.style.display = '';
   const totalAll   = state.debts.reduce((s, d) => s + d.total, 0);
