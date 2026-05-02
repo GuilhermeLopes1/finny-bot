@@ -1713,22 +1713,14 @@ body.dark-mode .benefit-alert.red    { background: #7f1d1d !important; color: #f
           </div>
         </div>
 
-        <div class="grid-2">
-          <div class="card">
-            <div class="card-header">
-              <span class="card-title">🎯 Progresso das Metas</span>
-              <button class="btn btn-xs btn-outline" onclick="navigate('goals')">Ver todas</button>
-            </div>
-            <div id="dash-goals-list"></div>
-          </div>
-          <!-- Card Benefícios no Dashboard -->
-<div class="card" style="margin-top:0">
-  <div class="card-header">
-    <span class="card-title">🎁 Seus Benefícios</span>
-    <button class="btn btn-xs btn-outline" onclick="navigate('benefits')">Ver todos</button>
+<div class="grid-2">
+  <div class="card">
+    <div class="card-header">
+      <span class="card-title">🎯 Progresso das Metas</span>
+      <button class="btn btn-xs btn-outline" onclick="navigate('goals')">Ver todas</button>
+    </div>
+    <div id="dash-goals-list"></div>
   </div>
-  <div id="dash-benefits-list"></div>
-</div>
           <div class="card">
             <div class="card-header">
               <span class="card-title">🕐 Transações Recentes</span>
@@ -1737,6 +1729,15 @@ body.dark-mode .benefit-alert.red    { background: #7f1d1d !important; color: #f
             <div id="dash-recent-list"></div>
           </div>
         </div>
+
+<!-- Card Benefícios no Dashboard — fora do grid-2, em linha própria -->
+<div class="card" style="margin-top:16px">
+  <div class="card-header">
+    <span class="card-title">🎁 Seus Benefícios</span>
+    <button class="btn btn-xs btn-outline" onclick="navigate('benefits')">Ver todos</button>
+  </div>
+  <div id="dash-benefits-list"></div>
+</div>
 
         <!-- RESUMO DÍVIDAS NO DASHBOARD -->
 <div class="card" id="dash-debts-card" style="display:none;margin-top:16px">
@@ -2574,7 +2575,7 @@ state.transactions = data.transactions || [];
 state.categories = data.categories || [];
 state.goals = data.goals || [];
 state.debts = data.debts || [];
-state.benefits = data.benefits || [];   // ← LINHA NOVA
+state.benefits = data.benefits || [];
 
 console.log("⚡ atualização em tempo real");
 
@@ -2583,7 +2584,9 @@ if(state.currentPage === 'dashboard') renderDashboard();
 if(state.currentPage === 'transactions') renderTransactions();
 if(state.currentPage === 'banks') renderBanks();
 if(state.currentPage === 'cards') renderCards();
-if(state.currentPage === 'benefits') renderBenefits();   // ← LINHA NOVA
+if(state.currentPage === 'benefits') renderBenefits();
+// Atualiza o mini-card de benefícios no dashboard em tempo real
+renderDashBenefits();
 });
 }
 // ═══════════════════════════════════════════════════
@@ -2706,37 +2709,29 @@ async function savePhone(){
 
 async function loadUserData() {
   try {
-    firebase.auth().onAuthStateChanged(async (user) => {
-      
-      if (!user) {
-        console.log("Sem sessão");
-        return;
-      }
+    if (!state.user) return;
 
-      console.log("Usuário logado:", user.uid);
+    const doc = await db.collection("users").doc(state.user.id).get();
 
-      const doc = await db.collection("users").doc(user.uid).get();
+    if (!doc.exists) {
+      console.log("Novo usuário (sem dados)");
+      return;
+    }
 
-      if (!doc.exists) {
-        console.log("Novo usuário (sem dados)");
-        return;
-      }
+    const data = doc.data();
 
-      const data = doc.data();
+    state.banks        = data.banks        || [];
+    state.cards        = data.cards        || [];
+    state.transactions = data.transactions || [];
+    state.categories   = data.categories   || [];
+    state.goals        = data.goals        || [];
+    state.benefits     = data.benefits     || [];
+    state.debts        = data.debts        || [];
+    state.user.isPro   = data.isPro === true;
 
-      state.banks        = data.banks || [];
-      state.cards        = data.cards || [];
-      state.transactions = data.transactions || [];
-      state.categories   = data.categories || [];
-      state.goals        = data.goals || [];
-      state.benefits     = data.benefits     || [];
-      state.debts = data.debts || [];
-      state.user.isPro   = data.isPro === true;
-
-      console.log("Dados carregados com sucesso");
-
-      if (state.currentPage === 'dashboard') renderDashboard();
-      if (state.currentPage === 'benefits')  renderBenefits();
+    console.log("✅ Dados carregados:", {
+      benefits: state.benefits.length,
+      transactions: state.transactions.length
     });
 
   } catch (error) {
@@ -3114,6 +3109,8 @@ function addBenefit({ name, emoji, total }) {
 function removeBenefit(id) {
   state.benefits = state.benefits.filter(b => b.id !== id);
   save();
+  renderBenefits();
+  renderDashBenefits();
 }
 
 function addBenefitTransaction(benefitId, { description, amount, date }) {
@@ -3485,14 +3482,17 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
   let pendingInc=0,pendingExp=0;
   state.transactions.forEach(t=>{
     const paid=(t.status||'paid')==='paid';
-    if(paid){if(t.type==='income')bal+=t.amount;else bal-=t.amount;}
-    else{if(t.type==='income')pendingInc+=t.amount;else pendingExp+=t.amount;}
+    const isBenefitTx = !!t.benefitId; // despesa coberta por benefício → não conta
+    if(!isBenefitTx){
+      if(paid){if(t.type==='income')bal+=t.amount;else bal-=t.amount;}
+      else{if(t.type==='income')pendingInc+=t.amount;else pendingExp+=t.amount;}
+    }
     const d=new Date(t.date+'T12:00:00');
     if(d.getMonth()===cm&&d.getFullYear()===cy){
-      if(paid){if(t.type==='income')inc+=t.amount;else exp+=t.amount;}
+      if(!isBenefitTx&&paid){if(t.type==='income')inc+=t.amount;else exp+=t.amount;}
     }
     if(d.getMonth()===lm&&d.getFullYear()===ly){
-      if(paid){if(t.type==='income')incLast+=t.amount;else expLast+=t.amount;}
+      if(!isBenefitTx&&paid){if(t.type==='income')incLast+=t.amount;else expLast+=t.amount;}
     }
   });
 
@@ -3602,10 +3602,10 @@ function renderDashBenefits() {
           </div>
           <div style="display:flex;justify-content:space-between;margin-top:4px;">
             <span style="font-size:11px;color:var(--muted)">
-              Usado: <strong style="color:var(--danger)">R$ ${fmt(used)}</strong>
+              Usado: <strong style="color:var(--danger)">${fmtBRL(used)}</strong>
             </span>
             <span style="font-size:11px;color:var(--muted)">
-              Resta: <strong style="color:var(--success)">R$ ${fmt(remaining)}</strong>
+              Resta: <strong style="color:var(--success)">${fmtBRL(remaining)}</strong>
             </span>
           </div>
         </div>
@@ -4146,7 +4146,7 @@ function saveTransaction(){
   const lim=state.settings.txLimit;
   if(lim>0&&!isPremium()&&state.transactions.length>=lim){openUpgradeModal();toast('Limite atingido. Faça upgrade para Pro!');return;}
   const benefitId = state.txType==='expense' ? (document.getElementById('tx-benefit').value||null) : null;
-  const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,benefitId,status:'paid'};
+    const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,benefitId,coveredByBenefit:!!benefitId,status:'paid'};
   state.transactions.push(tx);
   if(cardId&&state.txType==='expense'){const c=state.cards.find(c=>c.id===cardId);if(c)c.used=(c.used||0)+amount;}
   if(benefitId){
