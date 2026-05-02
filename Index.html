@@ -1003,7 +1003,31 @@ tr:hover td{background:#F5F6FC;}
 }
 /* Resumo de dívidas no dashboard */
 .debt-summary-grid {
-  display: grid; grid-template-columns: repeat(4, 1fr); gap: 12px;
+  display: grid;
+  grid-template-columns: repeat(4, 1fr);
+  gap: 12px;
+}
+@media (max-width: 600px) {
+  .debt-summary-grid {
+    grid-template-columns: repeat(2, 1fr);
+    gap: 8px;
+  }
+  .debt-info-row {
+    grid-template-columns: repeat(3, 1fr);
+    gap: 6px;
+  }
+  .debt-info-value {
+    font-size: 12px;
+  }
+  .debt-info-label {
+    font-size: 9px;
+  }
+  .debt-summary-value {
+    font-size: 15px !important;
+  }
+  .debt-summary-label {
+    font-size: 9px;
+  }
 }
 .debt-summary-item { text-align: center; padding: 12px 8px; }
 .debt-summary-label {
