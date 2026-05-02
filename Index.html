@@ -1832,7 +1832,6 @@ tr:hover td{background:#F5F6FC;}
 
 <script>
 
-const ADMIN_EMAIL = 'guilhermesousalopes@yahoo.com.br';
 const ADMIN_PASS  = 'gui85lo26';
 </script>
 
@@ -1877,7 +1876,8 @@ auth.onAuthStateChanged(async (user) => {
     document.getElementById('auth-screen').style.display = 'none';
     document.getElementById('app').style.display = 'block';
 
-    const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
+const userDoc = await db.collection("users").doc(user.uid).get();
+const isAdminUser = userDoc.data()?.role === 'admin';
     state.user = {
       uid: user.uid, id: user.uid, email: user.email,
       name: user.displayName || user.email?.split('@')[0], isAdmin: isAdminUser, isPro: isAdminUser
@@ -2100,30 +2100,39 @@ async function savePhone(){
   }
 }
 
-async function loadUserData(){
-  try{
-    if(!state.user) return;
+async function loadUserData() {
+  try {
+    firebase.auth().onAuthStateChanged(async (user) => {
+      
+      if (!user) {
+        console.log("Sem sessão");
+        return;
+      }
 
-    const userId = state.user.id;
+      console.log("Usuário logado:", user.uid);
 
-    const doc = await db.collection("users").doc(userId).get();
+      const doc = await db.collection("users").doc(user.uid).get();
 
-    if(doc.exists){
+      if (!doc.exists) {
+        console.log("Novo usuário (sem dados)");
+        return;
+      }
+
       const data = doc.data();
 
-      state.banks = data.banks || [];
-      state.cards = data.cards || [];
+      state.banks        = data.banks || [];
+      state.cards        = data.cards || [];
       state.transactions = data.transactions || [];
-      state.categories = data.categories || [];
-      state.goals = data.goals || [];
-    } else {
-      console.log("🆕 usuário novo (sem dados)");
-    }
+      state.categories   = data.categories || [];
+      state.goals        = data.goals || [];
+      state.user.isPro   = data.isPro === true;
 
-    console.log("🔥 carregado do Firebase");
+      console.log("Dados carregados com sucesso");
 
-  } catch(e){
-    console.error("❌ erro ao carregar:", e);
+    });
+
+  } catch (error) {
+    console.error("Erro ao carregar dados:", error);
   }
 }
 
@@ -2307,7 +2316,7 @@ async function bootApp(){
   const subEl   = document.getElementById('greeting-sub');
   const dateEl  = document.getElementById('greeting-date');
 
-  if(greetEl) greetEl.innerHTML = `${greetEmoji} ${greetWord}, <strong>${firstName}</strong>!`;
+if(greetEl) greetEl.innerHTML = `${greetEmoji} ${greetWord}, <strong>${escHtml(firstName)}</strong>!`;
   if(subEl){
     const msgs = [
       'Suas finanças estão sob controle 💪',
