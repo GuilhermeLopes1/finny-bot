@@ -1948,9 +1948,15 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
       <input id="debt-installments-total" type="number" min="0" placeholder="ex: 60">
     </div>
   </div>
-  <div class="form-group">
-    <label>Data de Início</label>
-    <input id="debt-start-date" type="date">
+  <div class="grid-2">
+    <div class="form-group">
+      <label>Data de Início</label>
+      <input id="debt-start-date" type="date">
+    </div>
+    <div class="form-group">
+      <label>Dia de Vencimento</label>
+      <input id="debt-due-day" type="number" min="1" max="31" placeholder="ex: 10">
+    </div>
   </div>
   <div style="display:flex;gap:10px;margin-top:6px">
     <button class="btn btn-outline btn-block" onclick="closeModal('modal-debt')">Cancelar</button>
@@ -2909,6 +2915,13 @@ function setPeriod(period){
 function renderReports(){
   const period=state.reportPeriod||'monthly';
   const {labels,incData,expData}=getReportData(period);
+
+  // Somar parcelas de dívidas às despesas do mês atual no relatório mensal
+  const debtMonthly = (state.debts || []).reduce((s, d) => s + (d.installment || 0), 0);
+  if (period === 'monthly' && expData.length > 0) {
+    expData[expData.length - 1] += debtMonthly; // soma no mês atual (último)
+  }
+
   const totalInc=incData.reduce((a,b)=>a+b,0);
   const totalExp=expData.reduce((a,b)=>a+b,0);
   const totalBal=totalInc-totalExp;
@@ -4416,6 +4429,7 @@ function openDebtModal(id = null) {
     document.getElementById('debt-installment').value = d.installment;
     document.getElementById('debt-installments-total').value = d.installmentsTotal || '';
     document.getElementById('debt-start-date').value = d.startDate || '';
+    document.getElementById('debt-due-day').value = d.dueDay || '';
     state.editId = id;
   } else {
     document.getElementById('debt-modal-title').textContent = 'Nova Dívida';
@@ -4424,8 +4438,9 @@ function openDebtModal(id = null) {
     document.getElementById('debt-total').value = '';
     document.getElementById('debt-paid').value = '0';
     document.getElementById('debt-installment').value = '';
-    document.getElementById('debt-installments-total').value = '';
+        document.getElementById('debt-installments-total').value = '';
     document.getElementById('debt-start-date').value = '';
+    document.getElementById('debt-due-day').value = '';
     state.editId = null;
   }
 }
@@ -4442,6 +4457,7 @@ async function saveDebt() {
   const installment = parseFloat(document.getElementById('debt-installment').value) || 0;
   const installmentsTotal = parseInt(document.getElementById('debt-installments-total').value) || null;
   const startDate = document.getElementById('debt-start-date').value || null;
+  const dueDay = parseInt(document.getElementById('debt-due-day').value) || null;
   const icon = document.getElementById('debt-icon').value;
 
   if (!name) { toast('❌ Informe o nome da dívida'); return; }
@@ -4451,12 +4467,12 @@ async function saveDebt() {
   if (state.editId) {
     const idx = state.debts.findIndex(d => d.id === state.editId);
     if (idx > -1) {
-      state.debts[idx] = { ...state.debts[idx], name, icon, total, paid, installment, installmentsTotal, startDate };
+                  state.debts[idx] = { ...state.debts[idx], name, icon, total, paid, installment, installmentsTotal, startDate, dueDay };
     }
   } else {
     state.debts.push({
       id: 'debt_' + Date.now(),
-      name, icon, total, paid, installment, installmentsTotal, startDate,
+      name, icon, total, paid, installment, installmentsTotal, startDate, dueDay,
       createdAt: new Date().toISOString()
     });
   }
@@ -4476,6 +4492,41 @@ async function deleteDebt(id) {
   renderDebts();
   if (state.currentPage === 'dashboard') renderDashboard();
   toast('🗑️ Dívida removida');
+}
+async function payDebtInstallment(id) {
+  const d = state.debts.find(x => x.id === id);
+  if (!d) return;
+
+  const rest = d.total - d.paid;
+  if (rest <= 0) { toast('✅ Esta dívida já está quitada!'); return; }
+
+  const valor = parseFloat(prompt(
+    `💸 Pagar parcela de "${d.name}"\n\nValor sugerido: R$ ${d.installment.toFixed(2).replace('.',',')}\n\nDigite o valor pago (ou Enter para confirmar):`,
+    d.installment.toFixed(2)
+  ));
+  if (!valor || valor <= 0) return;
+
+  // Atualiza a dívida
+  const idx = state.debts.findIndex(x => x.id === id);
+  state.debts[idx].paid = Math.min(state.debts[idx].paid + valor, state.debts[idx].total);
+
+  // Cria transação de despesa automaticamente
+  const today = new Date().toISOString().split('T')[0];
+  state.transactions.push({
+    id: 'tx_debt_' + Date.now(),
+    type: 'expense',
+    amount: valor,
+    description: `Parcela: ${d.name}`,
+    category: 'Dívidas',
+    date: today,
+    status: 'paid',
+    createdAt: new Date().toISOString()
+  });
+
+  await save();
+  renderDebts();
+  if (state.currentPage === 'dashboard') renderDashboard();
+  toast(`✅ Parcela de ${fmtBRL(valor)} registrada para "${d.name}"!`);
 }
 
 function renderDebts() {
@@ -4528,6 +4579,16 @@ function renderDebts() {
     const pct  = d.total > 0 ? Math.round((d.paid / d.total) * 100) : 0;
     const card = document.createElement('div');
     card.className = 'debt-card';
+    // Badge de vencimento
+    const today = new Date().getDate();
+    let dueBadge = '';
+    if (d.dueDay) {
+      const diff = d.dueDay - today;
+      const dueCls = diff < 0 ? 'background:#fee2e2;color:var(--danger)' : diff <= 5 ? 'background:#fef3c7;color:#b45309' : 'background:var(--primary-light);color:var(--primary)';
+      const dueMsg = diff < 0 ? `Venceu dia ${d.dueDay}` : diff === 0 ? `Vence HOJE (dia ${d.dueDay})` : `Vence dia ${d.dueDay} (${diff}d)`;
+      dueBadge = `<div style="display:inline-flex;align-items:center;gap:5px;padding:4px 10px;border-radius:20px;font-size:11px;font-weight:700;margin-bottom:10px;${dueCls}">📅 ${dueMsg}</div>`;
+    }
+
     card.innerHTML = `
       <div class="debt-card-header">
         <div class="debt-card-name">${d.icon || '💳'} ${d.name}</div>
@@ -4536,6 +4597,7 @@ function renderDebts() {
           <button class="btn btn-xs btn-danger" onclick="deleteDebt('${d.id}')">🗑️</button>
         </div>
       </div>
+      ${dueBadge}
       ${d.installmentsTotal ? `<div class="debt-installment-badge">${d.installmentsTotal}x</div>` : ''}
       <div class="debt-info-row">
         <div class="debt-info-item">
@@ -4564,6 +4626,9 @@ function renderDebts() {
           <div class="debt-progress-fill" style="width:${pct}%"></div>
         </div>
       </div>
+      <button class="btn btn-success btn-block" style="margin-top:14px;font-size:13px" onclick="payDebtInstallment('${d.id}')">
+        💸 Pagar Parcela — ${fmtBRL(d.installment)}
+      </button>
     `;
     list.appendChild(card);
   });
