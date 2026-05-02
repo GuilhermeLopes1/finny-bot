@@ -2960,17 +2960,17 @@ function renderBenefits() {
     <div class="benefit-summary-card">
       <div class="summary-icon">💰</div>
       <div class="summary-label">Total Disponível</div>
-      <div class="summary-value">R$ ${fmt(totalDisp)}</div>
+      <div class="summary-value">R$ ${fmtBRL(totalDisp)}</div>
     </div>
     <div class="benefit-summary-card">
       <div class="summary-icon">📤</div>
       <div class="summary-label">Total Utilizado</div>
-      <div class="summary-value" style="color:var(--danger)">R$ ${fmt(totalUsado)}</div>
+      <div class="summary-value" style="color:var(--danger)">R$ ${fmtBRL(totalUsado)}</div>
     </div>
     <div class="benefit-summary-card">
       <div class="summary-icon">✅</div>
       <div class="summary-label">Saldo Restante</div>
-      <div class="summary-value" style="color:var(--success)">R$ ${fmt(totalRest)}</div>
+      <div class="summary-value" style="color:var(--success)">R$ ${fmtBRL(totalRest)}</div>
     </div>
   ` : '';
 
@@ -2991,8 +2991,7 @@ function renderBenefits() {
       alertClass = 'yellow'; alertIcon = '⚠️';
       alertMsg = `Uso moderado. Você usou <strong>${pct}%</strong> — monitore os próximos gastos.`;
     } else if (pct > 0) {
-      alertMsg = `Ótimo controle! Você usou <strong>${pct}%</strong> — restam R$ ${fmt(remaining)}.`;
-    }
+alertMsg = `Ótimo controle! Você usou <strong>${pct}%</strong> — restam R$ ${fmtBRL(remaining)}.`;    }
 
     // Previsão
     let forecastHtml = '';
@@ -3015,7 +3014,7 @@ function renderBenefits() {
       <div class="benefit-tx-item">
         <span class="benefit-tx-desc">${t.description}</span>
         <span class="benefit-tx-date">${formatDate(t.date)}</span>
-        <span class="benefit-tx-amount">- R$ ${fmt(t.amount)}</span>
+        <span class="benefit-tx-amount">- R$ ${fmtBRL(t.amount)}</span>        
         <div class="benefit-tx-actions">
           <button title="Editar" onclick="openBenefitTxModal('${b.id}','${t.id}')">✏️</button>
           <button title="Excluir" onclick="deleteBenefitTx('${b.id}','${t.id}')">🗑️</button>
@@ -3045,7 +3044,7 @@ function renderBenefits() {
         <div class="benefit-amounts">
           <div class="benefit-amount-block">
             <div class="amount-label">Utilizado</div>
-            <div class="amount-value used">R$ ${fmt(used)}</div>
+            <div class="amount-value used">R$ ${fmtBRL(used)}</div>
           </div>
           <div class="benefit-amount-block">
             <div class="amount-label">Restante</div>
