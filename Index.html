@@ -158,14 +158,53 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .nav-item .nav-icon{font-size:15px;width:22px;text-align:center;}
 .nav-item .nav-icon{font-size:16px;width:22px;text-align:center;}
 .nav-item .pro-tag{font-size:9px;font-weight:700;background:linear-gradient(135deg,#f59e0b,#ef4444);color:#fff;padding:1px 6px;border-radius:20px;margin-left:auto;}
-.sidebar-footer{padding:14px 18px;border-top:1px solid var(--border);display:flex;align-items:center;gap:8px;}
-.avatar{width:32px;height:32px;border-radius:50%;background:var(--primary);color:#fff;display:flex;align-items:center;justify-content:center;font-weight:700;font-size:13px;flex-shrink:0;cursor:pointer;}
-.avatar:hover{opacity:.85;}
-.sidebar-footer .user-info{flex:1;min-width:0;cursor:pointer;}
-.sidebar-footer .user-name{font-size:12px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.sidebar-footer .user-email{font-size:10px;color:var(--muted);white-space:nowrap;overflow:hidden;text-overflow:ellipsis;}
-.logout-btn{background:none;border:none;cursor:pointer;color:var(--muted);font-size:17px;padding:4px;}
-.logout-btn:hover{color:var(--danger);}
+/* NOVO */
+.sidebar-footer{
+  padding:0;
+  border-top:1px solid var(--border);
+  flex-shrink:0;
+}
+/* Card de perfil no rodapé */
+.sidebar-profile{
+  display:flex;align-items:center;gap:10px;
+  padding:14px 16px;
+  margin:8px;
+  border-radius:14px;
+  background:var(--bg);
+  cursor:pointer;
+  transition:background .15s;
+  position:relative;
+}
+.sidebar-profile:hover{background:var(--primary-light);}
+
+.avatar{
+  width:38px;height:38px;border-radius:12px;
+  background:linear-gradient(135deg,var(--primary),#A855F7);
+  color:#fff;
+  display:flex;align-items:center;justify-content:center;
+  font-weight:800;font-size:15px;
+  flex-shrink:0;
+  box-shadow:0 3px 10px rgba(108,99,255,.3);
+  letter-spacing:-.5px;
+}
+.sidebar-footer .user-info{flex:1;min-width:0;}
+.sidebar-footer .user-name{
+  font-size:13px;font-weight:700;
+  color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.sidebar-footer .user-email{
+  font-size:10px;color:var(--muted);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+  margin-top:1px;
+}
+.logout-btn{
+  background:none;border:none;cursor:pointer;
+  color:var(--muted);font-size:16px;padding:5px;
+  border-radius:8px;flex-shrink:0;
+  transition:all .15s;
+}
+.logout-btn:hover{background:#fee2e2;color:var(--danger);}
 .main{margin-left:var(--sidebar-w);min-height:100vh;}
 .topbar{
   position:sticky;top:0;
@@ -312,8 +351,90 @@ tr:hover td{background:#F5F6FC;}
 .sub-feature-list{text-align:left;font-size:13px;margin-bottom:18px;}
 .sub-feature-list li{padding:5px 0;list-style:none;display:flex;align-items:center;gap:7px;border-bottom:1px solid var(--border);}
 .sub-feature-list li:last-child{border-bottom:none;}
-.amount-pos{color:var(--success);font-weight:700;}
-.amount-neg{color:var(--danger);font-weight:700;}
+/* NOVO */
+.amount-pos{color:var(--success);font-weight:800;}
+.amount-neg{color:var(--danger);font-weight:800;}
+
+/* ===== FEED DE TRANSAÇÕES ===== */
+.tx-feed{display:flex;flex-direction:column;gap:0;}
+
+.tx-group-label{
+  font-size:11px;font-weight:800;
+  color:var(--muted);text-transform:uppercase;
+  letter-spacing:.06em;
+  padding:14px 0 6px;
+}
+
+.tx-row{
+  display:flex;align-items:center;gap:14px;
+  padding:14px 18px;
+  background:var(--card);
+  border-bottom:1px solid var(--border);
+  transition:background .15s;
+  cursor:default;
+}
+.tx-row:first-of-type{border-radius:16px 16px 0 0;}
+.tx-row:last-of-type{border-bottom:none;border-radius:0 0 16px 16px;}
+.tx-row:only-of-type{border-radius:16px;}
+.tx-row:hover{background:#F5F6FC;}
+
+/* Ícone da categoria */
+.tx-icon{
+  width:42px;height:42px;flex-shrink:0;
+  border-radius:13px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:19px;
+}
+
+/* Coluna central */
+.tx-info{flex:1;min-width:0;}
+.tx-desc{
+  font-size:13px;font-weight:700;
+  color:var(--text);
+  white-space:nowrap;overflow:hidden;text-overflow:ellipsis;
+}
+.tx-meta{
+  font-size:11px;color:var(--muted);
+  font-weight:500;margin-top:2px;
+  display:flex;align-items:center;gap:6px;
+}
+
+/* Coluna da direita */
+.tx-right{
+  display:flex;flex-direction:column;
+  align-items:flex-end;gap:5px;flex-shrink:0;
+}
+.tx-amount{font-size:14px;font-weight:800;letter-spacing:-.2px;}
+.tx-amount.pos{color:var(--success);}
+.tx-amount.neg{color:var(--danger);}
+
+.tx-actions{display:flex;gap:3px;opacity:0;transition:opacity .15s;}
+.tx-row:hover .tx-actions{opacity:1;}
+.tx-actions .icon-btn{
+  padding:3px 6px;font-size:12px;
+  background:var(--bg);border-radius:7px;
+}
+
+/* Barra de filtros */
+.tx-filter-bar{
+  display:flex;align-items:center;gap:8px;
+  flex-wrap:wrap;
+  margin-bottom:16px;
+}
+.tx-filter-pill{
+  padding:6px 14px;border:1.5px solid var(--border);
+  border-radius:20px;background:var(--card);
+  cursor:pointer;font-size:12px;font-weight:700;
+  color:var(--muted);transition:all .15s;
+  font-family:inherit;
+}
+.tx-filter-pill.active{
+  background:var(--primary);border-color:var(--primary);
+  color:#fff;box-shadow:0 2px 8px rgba(108,99,255,.3);
+}
+.tx-filter-pill:hover:not(.active){
+  border-color:var(--primary);color:var(--primary);
+}
 .modal-overlay{display:none;position:fixed;inset:0;background:rgba(0,0,0,.5);z-index:200;align-items:center;justify-content:center;padding:16px;}
 .modal-overlay.open{display:flex;}
 .modal{background:var(--card);border-radius:18px;padding:26px 26px 22px;width:100%;max-width:480px;max-height:90vh;overflow-y:auto;box-shadow:0 24px 80px rgba(0,0,0,.22);}
@@ -1037,13 +1158,16 @@ tr:hover td{background:#F5F6FC;}
       <div class="nav-item hidden" data-page="admin" id="admin-nav-item" onclick="navigate('admin')"><span class="nav-icon">⚙️</span> Painel Admin</div>
       <div class="nav-item" data-page="bot" onclick="navigate('bot')"><span class="nav-icon">🤖</span> WhatsApp Bot</div>
     </div>
+<!-- NOVO -->
     <div class="sidebar-footer">
-      <div class="avatar" id="user-avatar" onclick="openProfileModal()" title="Ver perfil">U</div>
-      <div class="user-info" onclick="openProfileModal()" title="Ver perfil">
-        <div class="user-name" id="user-display-name">Usuário</div>
-        <div class="user-email" id="user-display-email">email@exemplo.com</div>
+      <div class="sidebar-profile" onclick="openProfileModal()" title="Ver perfil">
+        <div class="avatar" id="user-avatar">U</div>
+        <div class="user-info">
+          <div class="user-name" id="user-display-name">Usuário</div>
+          <div class="user-email" id="user-display-email">email@exemplo.com</div>
+        </div>
+        <button class="logout-btn" onclick="event.stopPropagation();doLogout()" title="Sair">↩</button>
       </div>
-      <button class="logout-btn" onclick="doLogout()" title="Sair">↩</button>
     </div>
     <div id="lista"></div>
   </nav>
@@ -1064,6 +1188,49 @@ tr:hover td{background:#F5F6FC;}
 
       <!-- DASHBOARD -->
       <div class="page active" id="page-dashboard">
+
+        <!-- Saudação -->
+        <div id="dashboard-greeting" style="
+          display:flex;align-items:center;justify-content:space-between;
+          margin-bottom:24px;
+          background:var(--card);
+          border-radius:20px;
+          padding:20px 24px;
+          box-shadow:0 2px 16px rgba(0,0,0,.06);
+          position:relative;overflow:hidden;
+        ">
+          <!-- Bolinha decorativa -->
+          <div style="
+            position:absolute;right:-20px;top:-20px;
+            width:120px;height:120px;border-radius:50%;
+            background:var(--primary);opacity:.05;pointer-events:none;
+          "></div>
+
+          <div>
+            <div id="greeting-text" style="
+              font-size:22px;font-weight:900;
+              color:var(--text);letter-spacing:-.4px;
+            ">👋 Olá, —</div>
+            <div id="greeting-sub" style="
+              font-size:13px;color:var(--muted);
+              margin-top:4px;font-weight:500;
+            ">Carregando...</div>
+          </div>
+
+          <div style="text-align:right;flex-shrink:0">
+            <div id="greeting-date" style="
+              font-size:13px;font-weight:700;color:var(--primary);
+            "></div>
+            <div id="greeting-balance-label" style="
+              font-size:10px;color:var(--muted);margin-top:2px;
+              font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+            ">Saldo total</div>
+            <div id="greeting-balance" style="
+              font-size:20px;font-weight:900;
+              color:var(--primary);letter-spacing:-.5px;
+            ">—</div>
+          </div>
+        </div>
         <div class="grid-4">
           <div class="stat-card highlight-card">
             <div class="stat-label">💼 Saldo Total</div>
@@ -1124,21 +1291,36 @@ tr:hover td{background:#F5F6FC;}
       </div>
 
       <!-- TRANSACTIONS -->
+<!-- NOVO -->
       <div class="page" id="page-transactions">
-        <div class="section-actions mb-16">
-          <button class="btn btn-primary btn-sm" onclick="openAddTransaction()">+ Nova Transação</button>
-          <button class="btn btn-outline btn-sm" onclick="navigate('import')">🤖 Importar Fatura</button>
-        </div>
-        <div class="card">
-          <div class="table-wrap">
-            <table>
-              <thead><tr><th>Descrição</th><th>Categoria</th><th>Conta/Cartão</th><th>Data</th><th>Tipo</th><th>Status</th><th>Valor</th><th></th></tr></thead>
-              
-              <tbody id="transactions-tbody"></tbody>
-            </table>
+
+        <!-- Header -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <div>
+            <div style="font-size:18px;font-weight:900;color:var(--text);letter-spacing:-.3px">💸 Transações</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px" id="tx-count-label">Histórico de movimentações</div>
           </div>
-          <div id="transactions-empty" class="empty-state hidden"><div class="emoji">💸</div><p>Nenhuma transação ainda.<br>Adicione a primeira!</p></div>
+          <div style="display:flex;gap:8px">
+            <button class="btn btn-outline btn-sm" onclick="navigate('import')">🤖 Importar</button>
+            <button class="btn btn-primary btn-sm" onclick="openAddTransaction()">+ Nova Transação</button>
+          </div>
         </div>
+
+        <!-- Filtros -->
+        <div class="tx-filter-bar">
+          <button class="tx-filter-pill active" onclick="setTxFilter('all',this)">Todas</button>
+          <button class="tx-filter-pill" onclick="setTxFilter('income',this)">📈 Receitas</button>
+          <button class="tx-filter-pill" onclick="setTxFilter('expense',this)">📉 Despesas</button>
+          <button class="tx-filter-pill" onclick="setTxFilter('pending',this)">⏳ Pendentes</button>
+        </div>
+
+        <!-- Feed -->
+        <div id="tx-feed-wrap"></div>
+        <div id="transactions-empty" class="empty-state hidden">
+          <div class="emoji">💸</div>
+          <p>Nenhuma transação ainda.<br>Adicione a primeira!</p>
+        </div>
+
       </div>
 
       <!-- BANKS -->
@@ -1972,9 +2154,46 @@ async function bootApp(){
   const u = state.user;
   const isPro = state.user?.isPro || state.isAdmin;
 
-  document.getElementById('user-display-name').textContent = u.name || u.email.split('@')[0];
+  // Nome completo e iniciais
+  const fullName  = u.name && u.name.trim() ? u.name.trim() : u.email.split('@')[0];
+  const firstName = fullName.split(' ')[0];
+  const initials  = fullName.split(' ').slice(0,2).map(w=>w[0].toUpperCase()).join('');
+
+  // Sidebar — nome + iniciais no avatar
+  document.getElementById('user-display-name').textContent = fullName;
   document.getElementById('user-display-email').textContent = u.email;
-  document.getElementById('user-avatar').textContent = (u.name || u.email)[0].toUpperCase();
+  document.getElementById('user-avatar').textContent = initials;
+
+  // Saudação no dashboard
+  const hour       = new Date().getHours();
+  const greetWord  = hour < 12 ? 'Bom dia' : hour < 18 ? 'Boa tarde' : 'Boa noite';
+  const greetEmoji = hour < 12 ? '☀️' : hour < 18 ? '🌤️' : '🌙';
+
+  const greetEl = document.getElementById('greeting-text');
+  const subEl   = document.getElementById('greeting-sub');
+  const dateEl  = document.getElementById('greeting-date');
+
+  if(greetEl) greetEl.innerHTML = `${greetEmoji} ${greetWord}, <strong>${firstName}</strong>!`;
+  if(subEl){
+    const msgs = [
+      'Suas finanças estão sob controle 💪',
+      'Acompanhe seus gastos com inteligência 📊',
+      'Cada real conta. Continue assim! 🎯',
+      'Organize. Economize. Conquiste. 🚀',
+    ];
+    subEl.textContent = msgs[new Date().getDate() % msgs.length];
+  }
+  if(dateEl){
+    dateEl.textContent = new Date().toLocaleDateString('pt-BR',{
+      weekday:'long', day:'2-digit', month:'long'
+    });
+  }
+
+  if(dateEl){
+    dateEl.textContent = new Date().toLocaleDateString('pt-BR',{
+      weekday:'long', day:'2-digit', month:'long'
+    });
+  }
 
   const pill = document.getElementById('plan-pill');
 
@@ -2114,20 +2333,42 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
       if(paid){if(t.type==='income')incLast+=t.amount;else expLast+=t.amount;}
     }
   });
+// Animação dos valores principais
 animateCounter(document.getElementById('stat-balance'), bal);
 animateCounter(document.getElementById('stat-income'), inc);
 animateCounter(document.getElementById('stat-expense'), exp);
-  // Pending summary
-  const pendEl=document.getElementById('stat-balance-change');
-  if(pendEl){
-    if(pendingInc>0||pendingExp>0){
-      pendEl.textContent=`⏳ ${fmtBRL(pendingExp)} pendente`;
-      pendEl.className='stat-change down';
-    } else {
-      pendEl.textContent='Apenas transações pagas';
-      pendEl.className='stat-change neutral';
-    }
+
+// Atualiza saldo no bloco de saudação
+const greetBal = document.getElementById('greeting-balance');
+const greetBalLabel = document.getElementById('greeting-balance-label');
+
+if (greetBal) {
+  greetBal.textContent = fmtBRL(bal);
+
+  // Cor do saldo (positivo ou negativo)
+  greetBal.style.color = bal >= 0 
+    ? 'var(--primary)' 
+    : 'var(--danger)';
+}
+
+if (greetBalLabel) {
+  greetBalLabel.style.color = bal >= 0 
+    ? 'var(--muted)' 
+    : 'var(--danger)';
+}
+
+// Resumo de pendências
+const pendEl = document.getElementById('stat-balance-change');
+
+if (pendEl) {
+  if (pendingInc > 0 || pendingExp > 0) {
+    pendEl.textContent = `⏳ ${fmtBRL(pendingExp)} pendente`;
+    pendEl.className = 'stat-change down';
+  } else {
+    pendEl.textContent = 'Apenas transações pagas';
+    pendEl.className = 'stat-change neutral';
   }
+}
   function changeLabel(cur,prev){
     if(!prev)return{txt:'Primeiro mês',cls:'neutral'};
     const diff=((cur-prev)/prev*100).toFixed(1);
@@ -2436,61 +2677,101 @@ function getReportData(period){
 // ═══════════════════════════════════════════════════
 //  TRANSACTIONS
 // ═══════════════════════════════════════════════════
+// NOVO
+let txFilter = 'all';
+function setTxFilter(f, el){
+  txFilter = f;
+  document.querySelectorAll('.tx-filter-pill').forEach(b=>b.classList.remove('active'));
+  if(el) el.classList.add('active');
+  renderTransactions();
+}
+
 function renderTransactions(){
-  const tbody = document.getElementById('transactions-tbody');
+  const wrap  = document.getElementById('tx-feed-wrap');
   const empty = document.getElementById('transactions-empty');
 
-  const sorted = [...state.transactions].sort((a,b)=>b.date.localeCompare(a.date));
+  // Atualiza contador de categorias (vem daqui por compatibilidade)
+  const countCat = document.getElementById('cat-count-label');
+  if(countCat) countCat.textContent = `${state.categories.length} categoria${state.categories.length!==1?'s':''} cadastrada${state.categories.length!==1?'s':''}`;
+
+  let sorted = [...state.transactions].sort((a,b)=>b.date.localeCompare(a.date));
+
+  // Aplicar filtro
+  if(txFilter === 'income')  sorted = sorted.filter(t=>t.type==='income');
+  if(txFilter === 'expense') sorted = sorted.filter(t=>t.type==='expense');
+  if(txFilter === 'pending') sorted = sorted.filter(t=>(t.status||'paid')==='pending');
+
+  // Atualiza label do header
+  const countEl = document.getElementById('tx-count-label');
+  if(countEl) countEl.textContent = `${sorted.length} transaç${sorted.length!==1?'ões':'ão'} encontrada${sorted.length!==1?'s':''}`;
 
   if(!sorted.length){
-    tbody.innerHTML='';
+    wrap.innerHTML='';
     empty.classList.remove('hidden');
     return;
   }
-
   empty.classList.add('hidden');
 
-    // Atualiza contador no header
-  const countEl = document.getElementById('cat-count-label');
-  if(countEl) countEl.textContent = `${state.categories.length} categoria${state.categories.length!==1?'s':''} cadastrada${state.categories.length!==1?'s':''}`;
+  // Agrupar por data
+  const groups = {};
+  sorted.forEach(t=>{
+    const d = t.date || '';
+    if(!groups[d]) groups[d]=[];
+    groups[d].push(t);
+  });
 
-  tbody.innerHTML = sorted.map(t => {
-   const cat = state.categories.find(c => c.id === t.category) || { emoji: '📋', name: '—' };
+  const today    = new Date().toISOString().split('T')[0];
+  const yesterday= new Date(Date.now()-86400000).toISOString().split('T')[0];
 
-    const bank = t.bankId ? state.banks.find(b=>b.id===t.bankId) : null;
-    const card = t.cardId ? state.cards.find(c=>c.id===t.cardId) : null;
+  const CAT_BG_COLORS_TX   = ['#EDE9FF','#DCFCE7','#FEE2E2','#FEF3C7','#DBEAFE','#FCE7F3','#F0FDF4','#FFF7ED','#EFF6FF','#F5F3FF'];
+  const CAT_ICON_COLORS_TX = ['#6C63FF','#22c55e','#ef4444','#f59e0b','#3b82f6','#ec4899','#16a34a','#ea580c','#2563eb','#7c3aed'];
 
-    const acct = card
-      ? `${CARD_BRAND_EMOJIS[card.brand]||'💳'} ${escHtml(card.name)}`
-      : bank
-      ? `🏦 ${escHtml(bank.name)}`
-      : '—';
+  let html = '';
+  Object.keys(groups).sort((a,b)=>b.localeCompare(a)).forEach(date=>{
+    const label = date===today ? 'Hoje' : date===yesterday ? 'Ontem' : fmtDate(date);
+    html += `<div class="tx-group-label">${label}</div><div class="tx-feed">`;
 
-    const status = t.status || 'paid';
-    const isPaid = status === 'paid';
+    groups[date].forEach(t=>{
+      const cat   = state.categories.find(c=>c.id===t.category)||{emoji:'📋',name:'—'};
+      const bank  = t.bankId ? state.banks.find(b=>b.id===t.bankId) : null;
+      const card  = t.cardId ? state.cards.find(c=>c.id===t.cardId) : null;
+      const acct  = card ? `${CARD_BRAND_EMOJIS[card.brand]||'💳'} ${escHtml(card.name)}`
+                  : bank ? `🏦 ${escHtml(bank.name)}` : '';
+      const isPaid   = (t.status||'paid')==='paid';
+      const catIdx   = state.categories.findIndex(c=>c.id===t.category);
+      const bgColor  = CAT_BG_COLORS_TX[catIdx>=0 ? catIdx%CAT_BG_COLORS_TX.length : 0];
+      const iconColor= CAT_ICON_COLORS_TX[catIdx>=0 ? catIdx%CAT_ICON_COLORS_TX.length : 0];
 
-    const statusBadge = isPaid
-      ? `<span class="badge badge-paid" style="cursor:pointer" onclick="toggleTxStatus('${t.id}')">✅ Pago</span>`
-      : `<span class="badge badge-pending" style="cursor:pointer" onclick="toggleTxStatus('${t.id}')">⏳ Pendente</span>`;
+      html += `
+      <div class="tx-row" style="opacity:${isPaid?1:.65}">
+        <div class="tx-icon" style="background:${bgColor};color:${iconColor}">${cat.emoji}</div>
+        <div class="tx-info">
+          <div class="tx-desc">${escHtml(t.description||'—')}</div>
+          <div class="tx-meta">
+            <span>${escHtml(cat.name)}</span>
+            ${acct?`<span>·</span><span>${acct}</span>`:''}
+            <span>·</span>
+            <span style="cursor:pointer" onclick="toggleTxStatus('${t.id}')">
+              ${isPaid?'✅ Pago':'⏳ Pendente'}
+            </span>
+          </div>
+        </div>
+        <div class="tx-right">
+          <span class="tx-amount ${t.type==='income'?'pos':'neg'}">
+            ${t.type==='income'?'+':'-'}${fmtBRL(t.amount)}
+          </span>
+          <div class="tx-actions">
+            <button class="icon-btn" title="Editar" onclick="abrirEdicao('${t.id}','${escHtml(t.description||t.desc||'')}',${t.amount},'${escHtml(t.category||'')}','${t.type}')">✏️</button>
+            <button class="icon-btn" title="Excluir" onclick="deleteTransaction('${t.id}')">🗑️</button>
+          </div>
+        </div>
+      </div>`;
+    });
 
-    return `
-      <tr style="opacity:${isPaid?1:.7}">
-        <td><strong>${escHtml(t.description || '—')}</strong></td>
-        <td>${cat.emoji} ${escHtml(cat.name)}</td>
-        <td style="font-size:12px">${acct}</td>
-        <td>${fmtDate(t.date)}</td>
-        <td><span class="badge badge-${t.type}">
-          ${t.type==='income'?'Receita':'Despesa'}
-        </span></td>
-        <td>${statusBadge}</td>
-        <td class="${t.type==='income'?'amount-pos':'amount-neg'}">
-          ${t.type==='income'?'+':'-'}${fmtBRL(t.amount)}
-        </td>
-        <td><button class="icon-btn" onclick="deleteTransaction('${t.id}')">🗑️</button></td>
-        <td><button class="icon-btn" onclick="abrirEdicao('${t.id}','${escHtml(t.description||t.desc||'')}',${t.amount},'${escHtml(t.category||'')}','${t.type}')">✏️</button></td>
-      </tr>
-    `;
-  }).join('');
+    html += `</div>`;
+  });
+
+  wrap.innerHTML = html;
 }
 </script>
 <!-- Modal de edição (redesenhado) -->
