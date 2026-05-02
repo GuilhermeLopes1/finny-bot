@@ -2320,8 +2320,7 @@ body.dark-mode .benefit-alert.red    { background: #7f1d1d !important; color: #f
 </div>
 
 <!-- MODAL: Criar/Editar Benefício -->
-<div id="modal-benefit" class="modal-overlay" onclick="if(event.target===this)closeBenefitModal()"></div>
-<div class="modal" style="max-width:440px">
+<div id="modal-benefit" class="modal-overlay" onclick="if(event.target===this)closeBenefitModal()"><div class="modal" style="max-width:440px">
     <div class="modal-header">
       <span class="modal-title" id="benefit-modal-title">Novo Benefício</span>
       <button class="modal-close" onclick="closeBenefitModal()">✕</button>
@@ -2356,8 +2355,7 @@ body.dark-mode .benefit-alert.red    { background: #7f1d1d !important; color: #f
 </div>
 
 <!-- MODAL: Adicionar/Editar Transação de Benefício -->
-<div id="modal-benefit-tx" class="modal-overlay" onclick="if(event.target===this)closeBenefitTxModal()"></div>
-<div class="modal" style="max-width:400px">
+<div id="modal-benefit-tx" class="modal-overlay" onclick="if(event.target===this)closeBenefitTxModal()"><div class="modal" style="max-width:400px">
     <div class="modal-header">
       <span class="modal-title" id="benefit-tx-modal-title">Registrar Uso</span>
       <button class="modal-close" onclick="closeBenefitTxModal()">✕</button>
@@ -2854,7 +2852,7 @@ function openBenefitModal(editId = null) {
     });
   }
 
-    document.getElementById('modal-benefit').classList.add('open');
+document.getElementById('modal-benefit').classList.add('open');
 }
 
 function closeBenefitModal() {
@@ -2903,7 +2901,7 @@ function openBenefitTxModal(benefitId, editTxId = null) {
     document.getElementById('benefit-tx-date').value   = new Date().toISOString().slice(0,10);
   }
 
-  document.getElementById('modal-benefit-tx').classList.add('open');
+document.getElementById('modal-benefit-tx').classList.add('open');
 }
 
 function closeBenefitTxModal() {
