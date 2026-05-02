@@ -2965,37 +2965,8 @@ function renderBenefits() {
   empty.classList.toggle('hidden', benefits.length > 0);
 
   // ── Resumo geral ──
-summary.innerHTML = benefits.length ? benefits.map(b => {
-  const { used, remaining, pct } = benefitCalc(b);
-  const color  = BENEFIT_COLORS[b.emoji] || 'var(--primary)';
-  const status = benefitStatus(pct);
-  return `
-    <div class="benefit-summary-card" style="border-top:3px solid ${color}">
-      <div class="summary-icon">${b.emoji}</div>
-      <div class="summary-label" style="color:var(--text);font-size:13px;font-weight:700">${b.name}</div>
-      <div style="display:flex;flex-direction:column;gap:4px;margin-top:8px;width:100%;text-align:left">
-        <div style="display:flex;justify-content:space-between;font-size:11px">
-          <span style="color:var(--muted)">Disponível</span>
-          <strong>R$ ${fmtBRL(b.total)}</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px">
-          <span style="color:var(--muted)">Utilizado</span>
-          <strong style="color:var(--danger)">R$ ${fmtBRL(used)}</strong>
-        </div>
-        <div style="display:flex;justify-content:space-between;font-size:11px">
-          <span style="color:var(--muted)">Restante</span>
-          <strong style="color:var(--success)">R$ ${fmtBRL(remaining)}</strong>
-        </div>
-        <div style="height:5px;background:var(--border);border-radius:99px;overflow:hidden;margin-top:4px">
-          <div style="height:100%;width:${pct}%;background:${color};border-radius:99px"></div>
-        </div>
-        <div style="font-size:10px;text-align:right;color:${color};font-weight:700">${status.emoji} ${pct}% usado</div>
-      </div>
-    </div>
-  `;
-}).join('') : '';
-
-  // ── Cards ──
+  // ── Cards (resumo + ações juntos) ──
+  summary.innerHTML = '';   // limpa o resumo antigo (não usa mais)
   grid.innerHTML = benefits.map(b => {
     const { used, remaining, pct } = benefitCalc(b);
     const status   = benefitStatus(pct);
@@ -3054,7 +3025,7 @@ alertMsg = `Ótimo controle! Você usou <strong>${pct}%</strong> — restam R$ $
             <div class="benefit-icon">${b.emoji}</div>
             <div>
               <div class="benefit-name">${b.name}</div>
-              <div class="benefit-total-label">Saldo total: R$ ${fmt(b.total)}</div>
+              <div class="benefit-total-label">Saldo total: ${fmtBRL(b.total)}</div>
             </div>
           </div>
           <span class="benefit-status-badge ${pct>=85?'danger':pct>=60?'warning':''}">
@@ -3069,7 +3040,7 @@ alertMsg = `Ótimo controle! Você usou <strong>${pct}%</strong> — restam R$ $
           </div>
           <div class="benefit-amount-block">
             <div class="amount-label">Restante</div>
-            <div class="amount-value remain">R$ ${fmt(remaining)}</div>
+            <div class="amount-value remain">${fmtBRL(remaining)}</div>
           </div>
         </div>
 
