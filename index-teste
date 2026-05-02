@@ -1233,7 +1233,7 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
   box-shadow: 0 2px 16px rgba(0,0,0,.06);
   transition: transform .2s, box-shadow .2s;
   position: relative;
-  overflow: hidden;
+  overflow: visible;
 }
 .benefit-card:hover {
   transform: translateY(-3px);
@@ -2062,6 +2062,12 @@ body.dark-mode .benefit-alert.red    { background: #7f1d1d !important; color: #f
       <div class="form-group"><label>Data</label><input type="date" id="tx-date"/></div>
     </div>
     <div class="form-group"><label>Categoria</label><select id="tx-category"></select></div>
+        <div class="form-group" id="tx-benefit-group" style="display:none">
+      <label>🎁 Pagar com Benefício <span style="color:var(--muted)">(opcional)</span></label>
+      <select id="tx-benefit">
+        <option value="">Nenhum benefício</option>
+      </select>
+    </div>
     <div class="input-row">
       <div class="form-group"><label>Conta Bancária</label><select id="tx-bank"></select></div>
       <div class="form-group" id="tx-card-group"><label>Cartão de Crédito <span style="color:var(--muted)">(opcional)</span></label><select id="tx-card"></select></div>
@@ -2729,6 +2735,8 @@ async function loadUserData() {
 
       console.log("Dados carregados com sucesso");
 
+      if (state.currentPage === 'dashboard') renderDashboard();
+      if (state.currentPage === 'benefits')  renderBenefits();
     });
 
   } catch (error) {
@@ -3085,9 +3093,9 @@ alertMsg = `Ótimo controle! Você usou <strong>${pct}%</strong> — restam R$ $
           </div>
         ` : ''}
 
-        <div class="benefit-card-actions">
-          <button class="btn btn-outline btn-sm" onclick="openBenefitTxModal('${b.id}')">➕ Registrar uso</button>
-          <button class="btn btn-outline btn-sm" onclick="openBenefitModal('${b.id}')">✏️ Editar</button>
+        <div class="benefit-card-actions" style="display:flex;gap:8px;margin-top:14px;padding-top:14px;border-top:1px solid var(--border)">
+          <button class="btn btn-outline btn-sm" style="flex:1" onclick="openBenefitTxModal('${b.id}')">➕ Usar</button>
+          <button class="btn btn-outline btn-sm" style="flex:1" onclick="openBenefitModal('${b.id}')">✏️ Editar</button>
           <button class="btn btn-danger btn-sm" onclick="confirmDeleteBenefit('${b.id}')">🗑️</button>
         </div>
       </div>
@@ -4122,8 +4130,9 @@ function openAddTransaction(){
   document.getElementById('tx-desc').value='';
   document.getElementById('tx-amount').value='';
   document.getElementById('tx-date').value=todayISO();
+  document.getElementById('tx-benefit').value='';
   setTxType('income');
-  populateCategorySelect();populateBankSelect();populateCardSelect();
+  populateCategorySelect();populateBankSelect();populateCardSelect();populateBenefitSelect();
   openModal('modal-transaction');
 }
 function setTxType(type){
@@ -4131,6 +4140,8 @@ function setTxType(type){
   document.getElementById('type-income').className='type-btn income'+(type==='income'?' active':'');
   document.getElementById('type-expense').className='type-btn expense'+(type==='expense'?' active':'');
   document.getElementById('tx-card-group').style.display=type==='expense'?'':'none';
+  document.getElementById('tx-benefit-group').style.display=type==='expense'?'':'none';
+  if(type==='expense') populateBenefitSelect();
 }
 function populateCategorySelect(){
   document.getElementById('tx-category').innerHTML=state.categories.map(c=>`<option value="${c.id}">${c.emoji} ${escHtml(c.name)}</option>`).join('');
@@ -4141,6 +4152,16 @@ function populateBankSelect(){
 function populateCardSelect(){
   document.getElementById('tx-card').innerHTML='<option value="">Nenhum cartão</option>'+state.cards.map(c=>`<option value="${c.id}">${CARD_BRAND_EMOJIS[c.brand]||'💳'} ${escHtml(c.name)}</option>`).join('');
 }
+function populateBenefitSelect(){
+  const sel = document.getElementById('tx-benefit');
+  if(!sel) return;
+  sel.innerHTML = '<option value="">Nenhum benefício</option>' +
+    (state.benefits||[]).map(b => {
+      const { remaining } = benefitCalc(b);
+      return `<option value="${b.id}">${b.emoji} ${escHtml(b.name)} — Saldo: R$ ${fmtBRL(remaining)}</option>`;
+    }).join('');
+}
+
 function saveTransaction(){
   const desc=document.getElementById('tx-desc').value.trim();
   const amount=parseFloat(document.getElementById('tx-amount').value);
@@ -4153,9 +4174,14 @@ function saveTransaction(){
   if(!date){toast('Informe a data.');return;}
   const lim=state.settings.txLimit;
   if(lim>0&&!isPremium()&&state.transactions.length>=lim){openUpgradeModal();toast('Limite atingido. Faça upgrade para Pro!');return;}
-  const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,status:'paid'};
+  const benefitId = state.txType==='expense' ? (document.getElementById('tx-benefit').value||null) : null;
+  const tx={id:uid(),desc,description:desc,amount,date,type:state.txType,category:cat,bankId,cardId,benefitId,status:'paid'};
   state.transactions.push(tx);
   if(cardId&&state.txType==='expense'){const c=state.cards.find(c=>c.id===cardId);if(c)c.used=(c.used||0)+amount;}
+  if(benefitId){
+    addBenefitTransaction(benefitId, { description: desc, amount, date });
+    renderDashBenefits();
+  }
   save();closeModal('modal-transaction');toast('Transação adicionada! ✅');
   if(state.currentPage==='transactions')renderTransactions();
   if(state.currentPage==='dashboard')renderDashboard();
