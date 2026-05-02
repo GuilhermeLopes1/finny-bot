@@ -40,7 +40,7 @@ app.use('/webhook', rateLimiter);
 // ROUTES
 // ─────────────────────────────────────────────
 const { handleRegisterUser } = require('./controllers/webhookController');
-app.post('/register', handleRegisterUser);
+app.post('/register', authMiddleware, handleRegisterUser);
 
 /**
  * Health check
