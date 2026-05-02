@@ -227,8 +227,9 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 }
 /* Bolinha decorativa maior e mais suave */
 .stat-card::before{
-  content:'';position:absolute;right:-18px;top:-18px;
-  width:90px;height:90px;border-radius:50%;opacity:.08;
+  content:'';position:absolute;right:-12px;top:-12px;
+  width:72px;height:72px;border-radius:50%;opacity:.06;
+  pointer-events:none;
 }
 .stat-card.green::before{background:var(--success);}
 .stat-card.red::before{background:var(--danger);}
@@ -265,15 +266,42 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .stat-change.neutral{color:var(--muted);}
 .table-wrap{overflow-x:auto;}
 table{width:100%;border-collapse:collapse;font-size:13px;}
-th{padding:9px 12px;text-align:left;font-size:11px;font-weight:700;color:var(--muted);text-transform:uppercase;border-bottom:1px solid var(--border);}
-td{padding:11px 12px;border-bottom:1px solid var(--border);vertical-align:middle;}
+th{
+  padding:10px 14px;
+  text-align:left;
+  font-size:10px;
+  font-weight:800;
+  color:var(--muted);
+  text-transform:uppercase;
+  letter-spacing:.06em;
+  border-bottom:2px solid var(--border);
+  background:var(--bg);
+}
+th:first-child{border-radius:10px 0 0 0;}
+th:last-child{border-radius:0 10px 0 0;}
+td{
+  padding:13px 14px;
+  border-bottom:1px solid var(--border);
+  vertical-align:middle;
+}
 tr:last-child td{border-bottom:none;}
-tr:hover td{background:var(--bg);}
-.badge{display:inline-block;padding:3px 9px;border-radius:20px;font-size:10px;font-weight:700;text-transform:uppercase;}
+tr{transition:background .15s;}
+tr:hover td{background:#F5F6FC;}
+.badge{
+  display:inline-flex;
+  align-items:center;
+  gap:4px;
+  padding:4px 10px;
+  border-radius:20px;
+  font-size:10px;
+  font-weight:700;
+  text-transform:uppercase;
+  letter-spacing:.03em;
+}
 .badge-income{background:#dcfce7;color:#15803d;}
 .badge-expense{background:#fee2e2;color:#b91c1c;}
 .badge-paid{background:#dcfce7;color:#15803d;}
-.badge-pending{background:#fef9c3;color:#92400e;}
+.badge-pending{background:#fef9c3;color:#854d0e;}
 /* Subscription page */
 .sub-plan-card{background:var(--card);border:2px solid var(--border);border-radius:16px;padding:24px;text-align:center;transition:border-color .2s;}
 .sub-plan-card.current-plan{border-color:var(--primary);}
@@ -295,10 +323,10 @@ tr:hover td{background:var(--bg);}
 .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1;}
 .modal-close:hover{color:var(--text);}
 .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
-.category-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(155px,1fr));gap:10px;}
-.category-card{background:var(--bg);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:8px;}
+.category-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
+.category-card{background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:8px;box-shadow:0 1px 4px rgba(0,0,0,.05);transition:box-shadow .2s;overflow:hidden;min-width:0;}
 .category-emoji{font-size:24px;}
-.category-name{flex:1;font-size:13px;font-weight:600;}
+.category-name{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
 .category-actions{display:flex;gap:3px;}
 .icon-btn{background:none;border:none;cursor:pointer;padding:4px 5px;border-radius:6px;font-size:14px;color:var(--muted);}
 .icon-btn:hover{background:var(--border);color:var(--text);}
@@ -307,7 +335,14 @@ tr:hover td{background:var(--bg);}
 .emoji-btn:hover,.emoji-btn.selected{border-color:var(--primary);background:var(--primary-light);}
 .goal-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;}
 .goal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
-.goal-name{font-size:14px;font-weight:700;}
+.goal-name{
+  font-size:14px;
+  font-weight:700;
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:200px;
+}
 .goal-values{display:flex;align-items:baseline;gap:5px;margin-bottom:7px;}
 .goal-current{font-size:20px;font-weight:800;color:var(--primary);}
 .goal-target{font-size:13px;color:var(--muted);}
@@ -327,14 +362,32 @@ tr:hover td{background:var(--bg);}
 .progress-label{font-size:11px;color:var(--muted);margin-top:4px;}
 .goals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;}
 .bank-grid,.cc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;}
-.bank-card,.cc-card{background:var(--card);border:1px solid var(--border);border-radius:16px;padding:18px 20px;position:relative;overflow:hidden;}
-.bank-card::before{content:'';position:absolute;right:-16px;top:-16px;width:80px;height:80px;border-radius:50%;background:var(--primary);opacity:.06;pointer-events: none;}
-.bank-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:12px;}
 .bank-logo{font-size:28px;}
 .bank-name{font-size:15px;font-weight:700;}
 .bank-type{font-size:11px;color:var(--muted);font-weight:500;}
-.bank-balance{font-size:24px;font-weight:800;color:var(--primary);}
-.bank-balance-label{font-size:11px;color:var(--muted);margin-bottom:2px;}
+.bank-card,.cc-card{
+  background:var(--card);
+  border:none;
+  border-radius:20px;
+  padding:22px 24px;
+  position:relative;
+  overflow:hidden;
+  box-shadow:0 2px 16px rgba(0,0,0,.07);
+  transition:transform .2s, box-shadow .2s;
+}
+.bank-card:hover,.cc-card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 10px 32px rgba(0,0,0,.11);
+}
+.bank-card::before{
+  content:'';position:absolute;right:-20px;top:-20px;
+  width:100px;height:100px;border-radius:50%;
+  background:var(--primary);opacity:.05;pointer-events:none;
+}
+.bank-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
+.bank-balance-label{font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
+.bank-balance{font-size:28px;font-weight:900;color:var(--primary);letter-spacing:-.5px;}
+
 .cc-brand{font-size:28px;}
 .cc-name{font-size:15px;font-weight:700;}
 .cc-limit-bar{margin-top:12px;}
@@ -371,22 +424,25 @@ tr:hover td{background:var(--bg);}
 .import-row{display:flex;align-items:center;gap:10px;padding:10px 14px;background:var(--bg);border-radius:10px;margin-bottom:8px;}
 .empty-state{
   text-align:center;
-  padding:44px 20px;
+  padding:40px 20px;
   color:var(--muted);
+  background:linear-gradient(180deg,#FAFBFF 0%,#F0F2F8 100%);
+  border-radius:14px;
+  border:1.5px dashed var(--border);
 }
 .empty-state .emoji{
-  font-size:48px;
-  margin-bottom:12px;
+  font-size:44px;
+  margin-bottom:10px;
   display:block;
-  filter:grayscale(.3);
 }
 .empty-state p{
   font-size:13px;
   color:var(--muted);
-  max-width:240px;
+  max-width:220px;
   margin:0 auto;
-  line-height:1.5;
+  line-height:1.6;
 }
+
 /* Fundo suave no card de tendências quando vazio */
 .card .empty-state{
   background:linear-gradient(180deg, #FAFBFF 0%, #F0F2F8 100%);
@@ -1545,6 +1601,32 @@ function fmtDate(d){if(!d)return '';const[y,m,day]=d.split('-');return `${day}/$
 function todayISO(){return new Date().toISOString().split('T')[0];}
 
 // ═══════════════════════════════════════════════════
+
+// ── Contador animado para valores financeiros ──────────────
+function animateCounter(el, targetValue, prefix='R$ ', duration=800) {
+  const start = performance.now();
+  const startVal = 0;
+  const isNegative = targetValue < 0;
+  const absTarget = Math.abs(targetValue);
+
+  function update(now) {
+    const elapsed = now - start;
+    const progress = Math.min(elapsed / duration, 1);
+    // Ease out cubic
+    const ease = 1 - Math.pow(1 - progress, 3);
+    const current = startVal + (absTarget - startVal) * ease;
+    el.textContent = (isNegative ? '-' : '') + prefix +
+      current.toLocaleString('pt-BR', { minimumFractionDigits: 2, maximumFractionDigits: 2 });
+    if (progress < 1) requestAnimationFrame(update);
+  }
+  requestAnimationFrame(update);
+}
+
+// ═══════════════════════════════════════════════════
+
+
+
+// ═══════════════════════════════════════════════════
 //  DASHBOARD
 // ═══════════════════════════════════════════════════
 function renderDashboard(){
@@ -1567,9 +1649,9 @@ const totalFatura = state.cards.reduce((sum, c) => sum + (c.currentInvoice || 0)
       if(paid){if(t.type==='income')incLast+=t.amount;else expLast+=t.amount;}
     }
   });
-  document.getElementById('stat-balance').textContent=fmtBRL(bal);
-  document.getElementById('stat-income').textContent=fmtBRL(inc);
-  document.getElementById('stat-expense').textContent=fmtBRL(exp);
+animateCounter(document.getElementById('stat-balance'), bal);
+animateCounter(document.getElementById('stat-income'), inc);
+animateCounter(document.getElementById('stat-expense'), exp);
   // Pending summary
   const pendEl=document.getElementById('stat-balance-change');
   if(pendEl){
@@ -1732,10 +1814,25 @@ function renderDashRecent(){
   const el=document.getElementById('dash-recent-list');if(!el)return;
   const recent=[...state.transactions].sort((a,b)=>b.date.localeCompare(a.date)).slice(0,6);
   if(!recent.length){el.innerHTML='<div class="empty-state" style="padding:20px"><div class="emoji" style="font-size:30px">💸</div><p style="font-size:13px">Sem transações</p></div>';return;}
-  el.innerHTML=recent.map(t=>{
-    const cat = state.categories.find(c => c.id === t.category)
-  || { emoji: '📋', name: '—' };
-    return `<div style="display:flex;align-items:center;gap:10px;padding:8px 0;border-bottom:1px solid var(--border)"><span style="font-size:20px">${cat.emoji}</span><div style="flex:1;min-width:0"><div style="font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis">${escHtml(t.desc)}</div><div style="font-size:11px;color:var(--muted)">${fmtDate(t.date)}</div></div><span style="font-size:13px;font-weight:700" class="${t.type==='income'?'amount-pos':'amount-neg'}">${t.type==='income'?'+':'-'}${fmtBRL(t.amount)}</span></div>`;
+el.innerHTML=recent.map(t=>{
+    const cat=state.categories.find(c=>c.id===t.category)||{emoji:'📋',name:'—'};
+    const isIncome=t.type==='income';
+    return `
+      <div style="display:flex;align-items:center;gap:12px;padding:10px 0;border-bottom:1px solid var(--border);transition:background .15s;">
+        <div style="width:38px;height:38px;border-radius:10px;background:${isIncome?'#dcfce7':'#fee2e2'};display:flex;align-items:center;justify-content:center;font-size:18px;flex-shrink:0;">
+          ${cat.emoji}
+        </div>
+        <div style="flex:1;min-width:0;">
+          <div style="font-size:13px;font-weight:700;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;color:var(--text)">${escHtml(t.desc||t.description||'—')}</div>
+          <div style="font-size:11px;color:var(--muted);margin-top:1px">${cat.name} · ${fmtDate(t.date)}</div>
+        </div>
+        <div style="text-align:right;flex-shrink:0;">
+          <div style="font-size:14px;font-weight:800;color:${isIncome?'var(--success)':'var(--danger)'}">
+            ${isIncome?'+':'-'}${fmtBRL(t.amount)}
+          </div>
+          <div style="font-size:10px;color:var(--muted);margin-top:1px">${t.status==='pending'?'⏳ Pendente':'✅ Pago'}</div>
+        </div>
+      </div>`;
   }).join('');
 }
 
@@ -1847,7 +1944,7 @@ function renderTransactions(){
   empty.classList.add('hidden');
 
   tbody.innerHTML = sorted.map(t => {
-    const cat = { name: t.category || '—', emoji: '📋' };
+   const cat = state.categories.find(c => c.id === t.category) || { emoji: '📋', name: '—' };
 
     const bank = t.bankId ? state.banks.find(b=>b.id===t.bankId) : null;
     const card = t.cardId ? state.cards.find(c=>c.id===t.cardId) : null;
@@ -2047,27 +2144,33 @@ function renderBanks(){
 
   empty.classList.add('hidden');
 
-  grid.innerHTML = state.banks.map(b => `
-  <div class="bank-card">
-    <div class="bank-card-header">
-      
-      <div>
-        <div class="bank-logo">${BANK_EMOJIS[b.name] || '🏦'}</div>
-        <div class="bank-name">${escHtml(b.name)}</div>
-        <div class="bank-type">${escHtml(b.type || 'Conta Corrente')}</div>
+  grid.innerHTML = state.banks.map(b => {
+    const isPositive = (b.balance || 0) >= 0;
+    return `
+    <div class="bank-card">
+      <div class="bank-card-header">
+        <div style="display:flex;align-items:center;gap:12px">
+          <div style="width:46px;height:46px;border-radius:14px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:24px">
+            ${BANK_EMOJIS[b.name] || '🏦'}
+          </div>
+          <div>
+            <div class="bank-name">${escHtml(b.name)}</div>
+            <div class="bank-type">${escHtml(b.type || 'Conta Corrente')}</div>
+          </div>
+        </div>
+        <div style="display:flex;gap:4px">
+          <button class="icon-btn" onclick="openEditBank('${b.id}')">✏️</button>
+          <button class="icon-btn" onclick="deleteBank('${b.id}')">🗑️</button>
+        </div>
       </div>
-
-      <div style="display:flex;gap:4px">
-        <button class="icon-btn" onclick="openEditBank('${b.id}')">✏️</button>
-        <button class="icon-btn" onclick="deleteBank('${b.id}')">🗑️</button>
+      <div style="margin-top:8px;padding-top:16px;border-top:1px solid var(--border)">
+        <div class="bank-balance-label">Saldo disponível</div>
+        <div class="bank-balance" style="color:${isPositive?'var(--primary)':'var(--danger)'}">
+          ${fmtBRL(b.balance)}
+        </div>
       </div>
-
-    </div>
-
-    <div class="bank-balance-label">Saldo disponível</div>
-    <div class="bank-balance">${fmtBRL(b.balance)}</div>
-  </div>
-`).join('');
+    </div>`;
+  }).join('');
 }
 
 function bankSelectChange(v){
