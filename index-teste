@@ -1457,10 +1457,14 @@ body.dark-mode .debt-card { background: #1a1a2e !important; border-color: #2a2a4
 
 /* Dashboard de benefícios — resumo no topo da página */
 .benefits-summary {
-  display: grid;
-  grid-template-columns: repeat(3, 1fr);
+  display: flex;
+  flex-wrap: wrap;
   gap: 14px;
   margin-bottom: 24px;
+}
+.benefit-summary-card {
+  flex: 1 1 180px;
+  max-width: 240px;
 }
 .benefit-summary-card {
   background: var(--card);
@@ -2558,23 +2562,22 @@ db.collection("users")
 
     const data = doc.data();
 
-    state.banks = data.banks || [];
-    state.cards = data.cards || [];
-    state.transactions = data.transactions || [];
-    state.categories = data.categories || [];
-    state.goals = data.goals || [];
-    state.debts = data.debts || [];
+state.banks = data.banks || [];
+state.cards = data.cards || [];
+state.transactions = data.transactions || [];
+state.categories = data.categories || [];
+state.goals = data.goals || [];
+state.debts = data.debts || [];
+state.benefits = data.benefits || [];   // ← LINHA NOVA
 
-    console.log("⚡ atualização em tempo real");
+console.log("⚡ atualização em tempo real");
 
-    // 🔥 👉 COLOCA AQUI
-
-
-    // 🔥 atualiza tela automaticamente
-    if(state.currentPage === 'dashboard') renderDashboard();
-    if(state.currentPage === 'transactions') renderTransactions();
-    if(state.currentPage === 'banks') renderBanks();
-    if(state.currentPage === 'cards') renderCards();
+// 🔥 atualiza tela automaticamente
+if(state.currentPage === 'dashboard') renderDashboard();
+if(state.currentPage === 'transactions') renderTransactions();
+if(state.currentPage === 'banks') renderBanks();
+if(state.currentPage === 'cards') renderCards();
+if(state.currentPage === 'benefits') renderBenefits();   // ← LINHA NOVA
 });
 }
 // ═══════════════════════════════════════════════════
@@ -2874,10 +2877,11 @@ function saveBenefit() {
     addBenefit({ name, emoji: _benefitSelectedEmoji, total });
   }
 
-  save();
-  closeBenefitModal();
-  renderBenefits();
-  toast('✅ Benefício salvo!');
+save();
+closeBenefitModal();
+renderBenefits();
+renderDashBenefits();   // ← LINHA NOVA
+toast('✅ Benefício salvo!');
 }
 
 // ── Transações do benefício ──────────────────────
@@ -2925,9 +2929,10 @@ function saveBenefitTx() {
     addBenefitTransaction(benefitId, { description, amount, date });
   }
 
-  closeBenefitTxModal();
-  renderBenefits();
-  toast('✅ Uso registrado!');
+closeBenefitTxModal();
+renderBenefits();
+renderDashBenefits();   // ← LINHA NOVA
+toast('✅ Uso registrado!');
 }
 
 // ── Render principal ─────────────────────────────
@@ -2952,27 +2957,35 @@ function renderBenefits() {
   empty.classList.toggle('hidden', benefits.length > 0);
 
   // ── Resumo geral ──
-  const totalDisp  = benefits.reduce((s, b) => s + (b.total || 0), 0);
-  const totalUsado = benefits.reduce((s, b) => s + benefitCalc(b).used, 0);
-  const totalRest  = totalDisp - totalUsado;
-
-  summary.innerHTML = benefits.length ? `
-    <div class="benefit-summary-card">
-      <div class="summary-icon">💰</div>
-      <div class="summary-label">Total Disponível</div>
-      <div class="summary-value">R$ ${fmtBRL(totalDisp)}</div>
+summary.innerHTML = benefits.length ? benefits.map(b => {
+  const { used, remaining, pct } = benefitCalc(b);
+  const color  = BENEFIT_COLORS[b.emoji] || 'var(--primary)';
+  const status = benefitStatus(pct);
+  return `
+    <div class="benefit-summary-card" style="border-top:3px solid ${color}">
+      <div class="summary-icon">${b.emoji}</div>
+      <div class="summary-label" style="color:var(--text);font-size:13px;font-weight:700">${b.name}</div>
+      <div style="display:flex;flex-direction:column;gap:4px;margin-top:8px;width:100%;text-align:left">
+        <div style="display:flex;justify-content:space-between;font-size:11px">
+          <span style="color:var(--muted)">Disponível</span>
+          <strong>R$ ${fmtBRL(b.total)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px">
+          <span style="color:var(--muted)">Utilizado</span>
+          <strong style="color:var(--danger)">R$ ${fmtBRL(used)}</strong>
+        </div>
+        <div style="display:flex;justify-content:space-between;font-size:11px">
+          <span style="color:var(--muted)">Restante</span>
+          <strong style="color:var(--success)">R$ ${fmtBRL(remaining)}</strong>
+        </div>
+        <div style="height:5px;background:var(--border);border-radius:99px;overflow:hidden;margin-top:4px">
+          <div style="height:100%;width:${pct}%;background:${color};border-radius:99px"></div>
+        </div>
+        <div style="font-size:10px;text-align:right;color:${color};font-weight:700">${status.emoji} ${pct}% usado</div>
+      </div>
     </div>
-    <div class="benefit-summary-card">
-      <div class="summary-icon">📤</div>
-      <div class="summary-label">Total Utilizado</div>
-      <div class="summary-value" style="color:var(--danger)">R$ ${fmtBRL(totalUsado)}</div>
-    </div>
-    <div class="benefit-summary-card">
-      <div class="summary-icon">✅</div>
-      <div class="summary-label">Saldo Restante</div>
-      <div class="summary-value" style="color:var(--success)">R$ ${fmtBRL(totalRest)}</div>
-    </div>
-  ` : '';
+  `;
+}).join('') : '';
 
   // ── Cards ──
   grid.innerHTML = benefits.map(b => {
