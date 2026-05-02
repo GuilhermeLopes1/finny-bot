@@ -323,29 +323,101 @@ tr:hover td{background:#F5F6FC;}
 .modal-close{background:none;border:none;font-size:22px;cursor:pointer;color:var(--muted);line-height:1;}
 .modal-close:hover{color:var(--text);}
 .modal-footer{display:flex;gap:10px;justify-content:flex-end;margin-top:18px;}
-.category-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(200px,1fr));gap:10px;}
-.category-card{background:var(--card);border:1.5px solid var(--border);border-radius:12px;padding:12px 14px;display:flex;align-items:center;gap:8px;box-shadow:0 1px 4px rgba(0,0,0,.05);transition:box-shadow .2s;overflow:hidden;min-width:0;}
-.category-emoji{font-size:24px;}
-.category-name{flex:1;font-size:13px;font-weight:600;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;min-width:0;}
-.category-actions{display:flex;gap:3px;}
+/* NOVO */
+.category-grid{
+  display:grid;
+  grid-template-columns:repeat(auto-fill,minmax(180px,1fr));
+  gap:12px;
+}
+
+.category-card{
+  background:var(--card);
+  border:none;
+  border-radius:18px;
+  padding:20px 18px 16px;
+  display:flex;
+  flex-direction:column;
+  align-items:flex-start;
+  gap:0;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  transition:transform .2s, box-shadow .2s;
+  overflow:hidden;
+  position:relative;
+  cursor:default;
+}
+.category-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 8px 24px rgba(0,0,0,.11);
+}
+
+/* Bolinha decorativa no fundo */
+.category-card::after{
+  content:'';
+  position:absolute;
+  right:-14px;bottom:-14px;
+  width:60px;height:60px;
+  border-radius:50%;
+  background:var(--primary);
+  opacity:.05;
+  pointer-events:none;
+}
+
+/* Ícone com fundo colorido */
+.category-emoji-wrap{
+  width:46px;height:46px;
+  border-radius:14px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:22px;
+  margin-bottom:12px;
+  flex-shrink:0;
+}
+
+.category-name{
+  font-size:13px;
+  font-weight:800;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:100%;
+  letter-spacing:-.1px;
+  margin-bottom:2px;
+}
+.category-label{
+  font-size:10px;
+  color:var(--muted);
+  font-weight:600;
+  text-transform:uppercase;
+  letter-spacing:.04em;
+  margin-bottom:10px;
+}
+.category-actions{
+  display:flex;
+  gap:4px;
+  margin-top:auto;
+  padding-top:10px;
+  width:100%;
+  border-top:1px solid var(--border);
+}
+.category-actions .icon-btn{
+  flex:1;
+  justify-content:center;
+  display:flex;
+  align-items:center;
+  padding:5px;
+  border-radius:8px;
+  background:var(--bg);
+  font-size:13px;
+}
+.category-actions .icon-btn:hover{
+  background:var(--primary-light);
+}
 .icon-btn{background:none;border:none;cursor:pointer;padding:4px 5px;border-radius:6px;font-size:14px;color:var(--muted);}
 .icon-btn:hover{background:var(--border);color:var(--text);}
 .emoji-picker{display:flex;flex-wrap:wrap;gap:5px;margin-top:6px;}
 .emoji-btn{font-size:20px;padding:5px;cursor:pointer;border-radius:7px;border:2px solid transparent;background:var(--bg);transition:all .15s;}
 .emoji-btn:hover,.emoji-btn.selected{border-color:var(--primary);background:var(--primary-light);}
-.goal-card{background:var(--card);border:1px solid var(--border);border-radius:14px;padding:16px 18px;}
-.goal-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:8px;}
-.goal-name{
-  font-size:14px;
-  font-weight:700;
-  white-space:nowrap;
-  overflow:hidden;
-  text-overflow:ellipsis;
-  max-width:200px;
-}
-.goal-values{display:flex;align-items:baseline;gap:5px;margin-bottom:7px;}
-.goal-current{font-size:20px;font-weight:800;color:var(--primary);}
-.goal-target{font-size:13px;color:var(--muted);}
+
 .progress-bar{
   height:10px;
   background:#EAECF4;
@@ -359,13 +431,8 @@ tr:hover td{background:#F5F6FC;}
   transition:width .7s cubic-bezier(.4,0,.2,1);
   box-shadow:0 2px 6px rgba(108,99,255,.4);
 }
-.progress-label{font-size:11px;color:var(--muted);margin-top:4px;}
-.goals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(250px,1fr));gap:14px;}
-.bank-grid,.cc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:14px;}
-.bank-logo{font-size:28px;}
-.bank-name{font-size:15px;font-weight:700;}
-.bank-type{font-size:11px;color:var(--muted);font-weight:500;}
-.bank-card,.cc-card{
+/* NOVO */
+.goal-card{
   background:var(--card);
   border:none;
   border-radius:20px;
@@ -375,27 +442,286 @@ tr:hover td{background:#F5F6FC;}
   box-shadow:0 2px 16px rgba(0,0,0,.07);
   transition:transform .2s, box-shadow .2s;
 }
-.bank-card:hover,.cc-card:hover{
+.goal-card:hover{
   transform:translateY(-4px);
-  box-shadow:0 10px 32px rgba(0,0,0,.11);
+  box-shadow:0 10px 30px rgba(0,0,0,.11);
 }
+/* Faixa colorida no topo do card */
+.goal-card::before{
+  content:'';position:absolute;top:0;left:0;right:0;
+  height:4px;
+  background:linear-gradient(90deg, var(--primary), #A855F7);
+  border-radius:20px 20px 0 0;
+}
+/* Card concluído: faixa verde */
+.goal-card.done::before{
+  background:linear-gradient(90deg, var(--success), #16a34a);
+}
+
+.goal-header{
+  display:flex;align-items:flex-start;
+  justify-content:space-between;
+  margin-bottom:14px;
+}
+.goal-icon{
+  font-size:28px;
+  line-height:1;
+  margin-bottom:6px;
+}
+.goal-name{
+  font-size:15px;
+  font-weight:800;
+  color:var(--text);
+  white-space:nowrap;
+  overflow:hidden;
+  text-overflow:ellipsis;
+  max-width:180px;
+  letter-spacing:-.2px;
+}
+.goal-badge-done{
+  display:inline-flex;align-items:center;gap:4px;
+  background:#dcfce7;color:#15803d;
+  font-size:10px;font-weight:700;
+  padding:3px 9px;border-radius:20px;
+  margin-top:4px;
+}
+.goal-badge-active{
+  display:inline-flex;align-items:center;gap:4px;
+  background:var(--primary-light);color:var(--primary);
+  font-size:10px;font-weight:700;
+  padding:3px 9px;border-radius:20px;
+  margin-top:4px;
+}
+
+/* Bloco de valores */
+.goal-values{
+  display:flex;align-items:flex-end;
+  justify-content:space-between;
+  margin-bottom:10px;
+}
+.goal-current{
+  font-size:24px;font-weight:900;
+  color:var(--primary);letter-spacing:-.5px;
+  line-height:1;
+}
+.goal-card.done .goal-current{color:var(--success);}
+.goal-target{
+  font-size:12px;color:var(--muted);
+  font-weight:600;text-align:right;line-height:1.4;
+}
+.goal-target span{
+  display:block;font-size:14px;
+  font-weight:800;color:var(--text);
+}
+
+/* Barra de progresso mais grossa */
+.goal-progress-bar{
+  height:8px;
+  background:var(--border);
+  border-radius:99px;
+  overflow:hidden;
+  margin-bottom:6px;
+}
+.goal-progress-fill{
+  height:100%;border-radius:99px;
+  background:linear-gradient(90deg, var(--primary), #A855F7);
+  transition:width .8s cubic-bezier(.4,0,.2,1);
+  box-shadow:0 2px 8px rgba(108,99,255,.35);
+}
+.goal-card.done .goal-progress-fill{
+  background:linear-gradient(90deg, var(--success), #16a34a);
+}
+
+.goal-footer{
+  display:flex;justify-content:space-between;align-items:center;
+  margin-top:6px;
+}
+.goal-pct{font-size:12px;font-weight:800;color:var(--primary);}
+.goal-card.done .goal-pct{color:var(--success);}
+.goal-remaining{font-size:11px;color:var(--muted);font-weight:600;}
+
+.goals-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(270px,1fr));gap:16px;}
+
+
+
+
+
+/* CC-CARD agora tem visual de cartão real */
+.cc-card{
+  border:none;
+  border-radius:20px;
+  padding:22px 24px;
+  position:relative;
+  overflow:hidden;
+  color:#fff;
+  min-height:190px;
+  box-shadow:0 8px 28px rgba(0,0,0,.18);
+  transition:transform .2s, box-shadow .2s;
+  background:linear-gradient(135deg,#6C63FF 0%,#A855F7 100%);
+}
+.cc-card:hover{
+  transform:translateY(-5px);
+  box-shadow:0 16px 40px rgba(108,99,255,.35);
+}
+/* Decoração tipo chip de cartão */
+
+.cc-card::after{
+  content:'';position:absolute;
+  right:20px;bottom:20px;
+  width:60px;height:60px;border-radius:50%;
+  background:rgba(255,255,255,.05);pointer-events:none;
+}
+/* Variações de cor por bandeira */
+.cc-card[data-brand="Mastercard"]{background:linear-gradient(135deg,#1a1a2e 0%,#e94560 100%);}
+.cc-card[data-brand="Nubank"]{background:linear-gradient(135deg,#8A2BE2 0%,#6C63FF 100%);}
+.cc-card[data-brand="Elo"]{background:linear-gradient(135deg,#1c1c1c 0%,#f59e0b 100%);}
+.cc-card[data-brand="American Express"]{background:linear-gradient(135deg,#006FCF 0%,#00B5E2 100%);}
+.cc-card[data-brand="Hipercard"]{background:linear-gradient(135deg,#b91c1c 0%,#ef4444 100%);}
 .bank-card::before{
   content:'';position:absolute;right:-20px;top:-20px;
   width:100px;height:100px;border-radius:50%;
   background:var(--primary);opacity:.05;pointer-events:none;
 }
-.bank-card-header{display:flex;align-items:center;justify-content:space-between;margin-bottom:16px;}
-.bank-balance-label{font-size:11px;color:var(--muted);margin-bottom:4px;font-weight:600;text-transform:uppercase;letter-spacing:.04em;}
-.bank-balance{font-size:28px;font-weight:900;color:var(--primary);letter-spacing:-.5px;}
+/* NOVO */
+.bank-grid,.cc-grid{display:grid;grid-template-columns:repeat(auto-fill,minmax(280px,1fr));gap:16px;}
 
-.cc-brand{font-size:28px;}
-.cc-name{font-size:15px;font-weight:700;}
-.cc-limit-bar{margin-top:12px;}
-.cc-limit-info{display:flex;justify-content:space-between;font-size:11px;color:var(--muted);margin-bottom:4px;}
+/* BANK CARD — visual moderno com identidade visual por banco */
+.bank-card{
+  background:var(--card);
+  border:none;
+  border-radius:20px;
+  padding:0;               /* padding vai nos filhos */
+  position:relative;
+  overflow:hidden;
+  box-shadow:0 2px 16px rgba(0,0,0,.07);
+  transition:transform .2s, box-shadow .2s;
+}
+.bank-card:hover{
+  transform:translateY(-4px);
+  box-shadow:0 12px 34px rgba(0,0,0,.12);
+}
+
+/* Topo colorido do card */
+.bank-card-top{
+  padding:18px 20px 16px;
+  position:relative;
+  overflow:hidden;
+}
+/* Bolhas decorativas no topo */
+.bank-card-top::before{
+  content:'';position:absolute;right:-20px;top:-20px;
+  width:100px;height:100px;border-radius:50%;
+  background:rgba(255,255,255,.12);pointer-events:none;
+}
+.bank-card-top::after{
+  content:'';position:absolute;right:30px;top:30px;
+  width:50px;height:50px;border-radius:50%;
+  background:rgba(255,255,255,.08);pointer-events:none;
+}
+
+.bank-card-logo-row{
+  display:flex;align-items:center;
+  justify-content:space-between;
+  margin-bottom:12px;
+}
+.bank-card-logo{
+  width:48px;height:48px;border-radius:14px;
+  background:rgba(255,255,255,.2);
+  display:flex;align-items:center;justify-content:center;
+  font-size:24px;
+  box-shadow:0 2px 8px rgba(0,0,0,.12);
+}
+.bank-card-actions{display:flex;gap:4px;}
+.bank-card-actions .icon-btn{
+  background:rgba(255,255,255,.2);
+  color:#fff;border-radius:8px;
+}
+.bank-card-actions .icon-btn:hover{
+  background:rgba(255,255,255,.35);
+}
+
+.bank-name{font-size:16px;font-weight:800;color:#fff;letter-spacing:-.2px;}
+.bank-type-pill{
+  display:inline-flex;align-items:center;
+  background:rgba(255,255,255,.18);
+  color:rgba(255,255,255,.9);
+  font-size:10px;font-weight:700;
+  padding:3px 9px;border-radius:20px;
+  margin-top:4px;
+  text-transform:uppercase;letter-spacing:.04em;
+}
+
+/* Rodapé branco com saldo */
+.bank-card-bottom{
+  padding:16px 20px;
+  background:var(--card);
+  border-top:1px solid rgba(0,0,0,.06);
+}
+.bank-balance-label{
+  font-size:10px;color:var(--muted);
+  font-weight:700;text-transform:uppercase;
+  letter-spacing:.05em;margin-bottom:4px;
+}
+.bank-balance{
+  font-size:26px;font-weight:900;
+  letter-spacing:-.5px;line-height:1;
+}
+.bank-balance.positive{color:var(--primary);}
+.bank-balance.negative{color:var(--danger);}
+.bank-balance-hint{
+  font-size:10px;margin-top:4px;font-weight:600;
+}
+.bank-balance-hint.positive{color:var(--success);}
+.bank-balance-hint.negative{color:var(--danger);}
+
+/* NOVO */
+.cc-brand{font-size:30px;line-height:1;}
+.cc-name{font-size:16px;font-weight:800;margin-top:6px;letter-spacing:-.2px;}
+.cc-subtitle{font-size:11px;color:rgba(255,255,255,.65);font-weight:500;margin-top:2px;}
+
+.cc-limit-bar{margin-top:16px;}
+.cc-limit-info{
+  display:flex;justify-content:space-between;
+  font-size:11px;font-weight:700;
+  color:rgba(255,255,255,.8);
+  margin-bottom:6px;
+}
+.cc-limit-info .cc-current{
+  font-size:13px;font-weight:800;
+  color:#fff;
+}
 .cc-used{font-weight:700;color:var(--danger);}
-.cc-dates{display:flex;gap:16px;margin-top:10px;}
-.cc-date-item{font-size:11px;color:var(--muted);}
-.cc-date-item strong{display:block;font-size:13px;color:var(--text);}
+
+/* Barra de uso mais elegante */
+.cc-progress{
+  height:6px;background:rgba(255,255,255,.2);
+  border-radius:99px;overflow:hidden;
+  margin-bottom:5px;
+}
+.cc-progress-fill{
+  height:100%;border-radius:99px;
+  transition:width .7s cubic-bezier(.4,0,.2,1);
+}
+
+.cc-avail{
+  font-size:10px;color:rgba(255,255,255,.6);
+  font-weight:600;
+}
+
+.cc-dates{
+  display:flex;gap:0;margin-top:14px;
+  border-top:1px solid rgba(255,255,255,.15);
+  padding-top:12px;
+}
+.cc-date-item{
+  flex:1;font-size:10px;
+  color:rgba(255,255,255,.65);
+  font-weight:600;text-transform:uppercase;letter-spacing:.04em;
+}
+.cc-date-item strong{
+  display:block;font-size:14px;
+  color:#fff;font-weight:800;margin-top:2px;
+}
 .admin-section{margin-bottom:24px;}
 .admin-section-title{font-size:13px;font-weight:700;color:var(--muted);text-transform:uppercase;letter-spacing:.05em;margin-bottom:10px;display:flex;align-items:center;gap:6px;}
 .settings-row{display:flex;align-items:center;justify-content:space-between;padding:11px 0;border-bottom:1px solid var(--border);gap:14px;}
@@ -450,10 +776,103 @@ tr:hover td{background:#F5F6FC;}
   border:1.5px dashed var(--border);
 }
 /* Period selector */
-.period-selector{display:flex;gap:6px;flex-wrap:wrap;}
-.period-btn{padding:7px 16px;border:1.5px solid var(--border);border-radius:20px;background:var(--bg);cursor:pointer;font-size:12px;font-weight:600;color:var(--muted);font-family:inherit;transition:all .15s;}
-.period-btn.active{background:var(--primary);border-color:var(--primary);color:#fff;}
-.period-btn:hover:not(.active){border-color:var(--primary);color:var(--primary);}
+/* NOVO */
+.period-selector{
+  display:flex;gap:4px;flex-wrap:wrap;
+  background:var(--bg);
+  border-radius:14px;
+  padding:4px;
+}
+.period-btn{
+  padding:7px 18px;
+  border:none;
+  border-radius:10px;
+  background:transparent;
+  cursor:pointer;
+  font-size:12px;font-weight:700;
+  color:var(--muted);
+  font-family:inherit;
+  transition:all .18s;
+}
+.period-btn.active{
+  background:var(--primary);
+  color:#fff;
+  box-shadow:0 2px 8px rgba(108,99,255,.35);
+}
+.period-btn:hover:not(.active){
+  background:var(--card);
+  color:var(--primary);
+}
+
+/* Cards de resumo do relatório */
+.report-stat-card{
+  background:var(--card);
+  border-radius:18px;
+  padding:20px 22px;
+  border:none;
+  position:relative;
+  overflow:hidden;
+  box-shadow:0 2px 12px rgba(0,0,0,.06);
+  transition:transform .2s, box-shadow .2s;
+}
+.report-stat-card:hover{
+  transform:translateY(-3px);
+  box-shadow:0 8px 24px rgba(0,0,0,.1);
+}
+.report-stat-icon{
+  width:42px;height:42px;border-radius:12px;
+  display:flex;align-items:center;justify-content:center;
+  font-size:20px;margin-bottom:12px;
+}
+.report-stat-label{
+  font-size:11px;color:var(--muted);
+  font-weight:700;text-transform:uppercase;
+  letter-spacing:.04em;margin-bottom:6px;
+}
+.report-stat-value{
+  font-size:24px;font-weight:900;
+  letter-spacing:-.5px;line-height:1;
+}
+.report-stat-value.green{color:var(--success);}
+.report-stat-value.red{color:var(--danger);}
+.report-stat-value.blue{color:var(--primary);}
+.report-stat-sub{
+  font-size:11px;font-weight:600;
+  margin-top:5px;
+}
+.report-stat-sub.up{color:var(--success);}
+.report-stat-sub.down{color:var(--danger);}
+.report-stat-sub.neutral{color:var(--muted);}
+
+/* Área do gráfico */
+.report-chart-card{
+  background:var(--card);
+  border-radius:20px;
+  padding:24px;
+  border:none;
+  box-shadow:0 2px 16px rgba(0,0,0,.06);
+  margin-top:16px;
+}
+.report-chart-header{
+  display:flex;align-items:center;
+  justify-content:space-between;
+  margin-bottom:20px;
+}
+.report-chart-title{
+  font-size:15px;font-weight:800;
+  color:var(--text);
+  display:flex;align-items:center;gap:8px;
+}
+.report-chart-legend{
+  display:flex;gap:14px;
+}
+.report-chart-legend-item{
+  display:flex;align-items:center;gap:5px;
+  font-size:11px;font-weight:600;color:var(--muted);
+}
+.report-chart-legend-dot{
+  width:8px;height:8px;border-radius:50%;
+}
 /* Trend cards */
 .trend-card{background:linear-gradient(135deg,var(--primary),#a855f7);border-radius:14px;padding:18px 20px;color:#fff;border:none;}
 .trend-label{font-size:12px;color:rgba(255,255,255,.75);font-weight:600;margin-bottom:6px;}
@@ -752,26 +1171,51 @@ tr:hover td{background:#F5F6FC;}
 
    
 
-      <!-- REPORTS -->
+<!-- NOVO -->
       <div class="page" id="page-reports">
-        <div class="card mb-16">
-          <div class="card-header">
-            <span class="card-title">📊 Relatórios Financeiros</span>
-            <div class="period-selector" id="period-selector">
-              <button class="period-btn" onclick="setPeriod('daily')">Diário</button>
-              <button class="period-btn" onclick="setPeriod('weekly')">Semanal</button>
-              <button class="period-btn active" onclick="setPeriod('monthly')">Mensal</button>
-              <button class="period-btn" onclick="setPeriod('yearly')">Anual</button>
+
+        <!-- Seletor de período solto no topo -->
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <div>
+            <div style="font-size:18px;font-weight:900;color:var(--text);letter-spacing:-.3px">Visão Financeira</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px">Acompanhe receitas e despesas por período</div>
+          </div>
+          <div class="period-selector" id="period-selector">
+            <button class="period-btn" onclick="setPeriod('daily')">Diário</button>
+            <button class="period-btn" onclick="setPeriod('weekly')">Semanal</button>
+            <button class="period-btn active" onclick="setPeriod('monthly')">Mensal</button>
+            <button class="period-btn" onclick="setPeriod('yearly')">Anual</button>
+          </div>
+        </div>
+
+        <!-- Cards de resumo -->
+        <div class="grid-3 mb-16" id="reports-stats"></div>
+
+        <!-- Gráfico -->
+        <div class="report-chart-card">
+          <div class="report-chart-header">
+            <span class="report-chart-title">📈 Evolução do Período</span>
+            <div class="report-chart-legend">
+              <div class="report-chart-legend-item">
+                <div class="report-chart-legend-dot" style="background:#22c55e"></div> Receitas
+              </div>
+              <div class="report-chart-legend-item">
+                <div class="report-chart-legend-dot" style="background:#ef4444"></div> Despesas
+              </div>
             </div>
           </div>
-          <div class="grid-3 mb-16" id="reports-stats" style="margin-bottom:16px"></div>
-          <div class="chart-wrap" style="height:260px"><canvas id="chart-reports"></canvas></div>
+          <div style="height:280px"><canvas id="chart-reports"></canvas></div>
         </div>
+
       </div>
 
-      <!-- CATEGORIES -->
+<!-- NOVO -->
       <div class="page" id="page-categories">
-        <div class="section-actions mb-16">
+        <div style="display:flex;align-items:center;justify-content:space-between;margin-bottom:20px">
+          <div>
+            <div style="font-size:18px;font-weight:900;color:var(--text);letter-spacing:-.3px">🏷️ Categorias</div>
+            <div style="font-size:12px;color:var(--muted);margin-top:2px" id="cat-count-label">Organize seus gastos por categoria</div>
+          </div>
           <button class="btn btn-primary btn-sm" onclick="openAddCategory()">+ Nova Categoria</button>
         </div>
         <div class="category-grid" id="category-grid"></div>
@@ -1249,7 +1693,28 @@ if (data.phoneNumber && data.phoneNumber.length > 5) {
 // ═══════════════════════════════════════════════════
 
 const DEFAULT_EMOJIS = ['🍔','🚗','🏠','🎮','💼','💰','🛒','📱','✈️','🏥','📚','🎵','💊','🐾','⚡','👗','🎓','🏋️','🐕','🎁'];
+const CAT_BG_COLORS = [
+  '#EDE9FF','#DCFCE7','#FEE2E2','#FEF3C7','#DBEAFE',
+  '#FCE7F3','#F0FDF4','#FFF7ED','#EFF6FF','#F5F3FF',
+  '#D1FAE5','#FFE4E6','#E0F2FE','#FDF4FF','#ECFDF5',
+];
+const CAT_ICON_COLORS = [
+  '#6C63FF','#22c55e','#ef4444','#f59e0b','#3b82f6',
+  '#ec4899','#16a34a','#ea580c','#2563eb','#7c3aed',
+  '#059669','#e11d48','#0284c7','#a855f7','#10b981',
+];
 const BANK_EMOJIS = {'Nubank':'🟣','Itaú':'🟠','Bradesco':'🔴','Banco do Brasil':'🟡','Caixa':'🔵','Santander':'🔴','Inter':'🟠','C6 Bank':'⚫'};
+const BANK_COLORS = {
+  'Nubank':         'linear-gradient(135deg,#8A2BE2 0%,#6C63FF 100%)',
+  'Itaú':           'linear-gradient(135deg,#EC7000 0%,#f59e0b 100%)',
+  'Bradesco':       'linear-gradient(135deg,#CC092F 0%,#ef4444 100%)',
+  'Banco do Brasil':'linear-gradient(135deg,#003882 0%,#F9D000 100%)',
+  'Caixa':          'linear-gradient(135deg,#005CA9 0%,#0ea5e9 100%)',
+  'Santander':      'linear-gradient(135deg,#EC0000 0%,#ff6b6b 100%)',
+  'Inter':          'linear-gradient(135deg,#FF7A00 0%,#f59e0b 100%)',
+  'C6 Bank':        'linear-gradient(135deg,#1a1a2e 0%,#4a4a6a 100%)',
+};
+const BANK_COLORS_DEFAULT = 'linear-gradient(135deg,var(--primary) 0%,#A855F7 100%)';
 const CARD_BRAND_EMOJIS = {'Visa':'💙','Mastercard':'🔴','Elo':'🟡','American Express':'🟢','Hipercard':'🔴','Outro':'💳'};
 
 // Smart AI keyword → category mapping
@@ -1858,21 +2323,63 @@ function renderReports(){
 
   const statsEl=document.getElementById('reports-stats');
   if(statsEl){
+// NOVO
+    const savingRate = totalInc > 0 ? Math.round(((totalInc - totalExp) / totalInc) * 100) : 0;
     statsEl.innerHTML=`
-      <div class="stat-card green"><div class="stat-label">📈 Total Receitas</div><div class="stat-value green">${fmtBRL(totalInc)}</div><div class="stat-change neutral">no período selecionado</div></div>
-      <div class="stat-card red"><div class="stat-label">📉 Total Despesas</div><div class="stat-value red">${fmtBRL(totalExp)}</div><div class="stat-change neutral">no período selecionado</div></div>
-      <div class="stat-card ${totalBal>=0?'green':'red'}"><div class="stat-label">💰 Saldo do Período</div><div class="stat-value ${totalBal>=0?'green':'red'}">${fmtBRL(totalBal)}</div><div class="stat-change neutral">${totalBal>=0?'positivo':'negativo'}</div></div>`;
+      <div class="report-stat-card">
+        <div class="report-stat-icon" style="background:#dcfce7">📈</div>
+        <div class="report-stat-label">Total Receitas</div>
+        <div class="report-stat-value green">${fmtBRL(totalInc)}</div>
+        <div class="report-stat-sub neutral">no período selecionado</div>
+      </div>
+      <div class="report-stat-card">
+        <div class="report-stat-icon" style="background:#fee2e2">📉</div>
+        <div class="report-stat-label">Total Despesas</div>
+        <div class="report-stat-value red">${fmtBRL(totalExp)}</div>
+        <div class="report-stat-sub neutral">no período selecionado</div>
+      </div>
+      <div class="report-stat-card">
+        <div class="report-stat-icon" style="background:${totalBal>=0?'#dcfce7':'#fee2e2'}">${totalBal>=0?'💰':'⚠️'}</div>
+        <div class="report-stat-label">Saldo do Período</div>
+        <div class="report-stat-value ${totalBal>=0?'green':'red'}">${fmtBRL(totalBal)}</div>
+        <div class="report-stat-sub ${totalBal>=0?'up':'down'}">${totalBal>=0?'▲ positivo':'▼ negativo'} · ${savingRate}% poupado</div>
+      </div>`;
   }
 
   const ctx=document.getElementById('chart-reports');if(!ctx)return;
   if(chartReports)chartReports.destroy();
   chartReports=new Chart(ctx,{
+// NOVO
     type:'line',
     data:{labels,datasets:[
-      {label:'Receitas',data:incData,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.1)',tension:.35,fill:true,pointRadius:3,pointBackgroundColor:'#22c55e'},
-      {label:'Despesas',data:expData,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.1)',tension:.35,fill:true,pointRadius:3,pointBackgroundColor:'#ef4444'}
+      {label:'Receitas',data:incData,borderColor:'#22c55e',backgroundColor:'rgba(34,197,94,.08)',tension:.4,fill:true,pointRadius:4,pointBackgroundColor:'#fff',pointBorderColor:'#22c55e',pointBorderWidth:2,borderWidth:2.5},
+      {label:'Despesas',data:expData,borderColor:'#ef4444',backgroundColor:'rgba(239,68,68,.08)',tension:.4,fill:true,pointRadius:4,pointBackgroundColor:'#fff',pointBorderColor:'#ef4444',pointBorderWidth:2,borderWidth:2.5}
     ]},
-    options:{responsive:true,maintainAspectRatio:false,interaction:{mode:'index',intersect:false},plugins:{legend:{labels:{font:{size:11},boxWidth:12}}},scales:{y:{ticks:{callback:v=>v>=1000?'R$'+(v/1000).toFixed(1)+'k':'R$'+v,font:{size:10}},grid:{color:'rgba(0,0,0,.04)'}},x:{ticks:{font:{size:10}},grid:{display:false}}}}
+    options:{
+      responsive:true,maintainAspectRatio:false,
+      interaction:{mode:'index',intersect:false},
+      plugins:{
+        legend:{display:false},
+        tooltip:{
+          backgroundColor:'rgba(15,15,35,.9)',
+          titleColor:'#fff',bodyColor:'rgba(255,255,255,.75)',
+          padding:12,cornerRadius:10,
+          callbacks:{label:ctx=>' '+fmtBRL(ctx.raw)}
+        }
+      },
+      scales:{
+        y:{
+          ticks:{callback:v=>v>=1000?'R$'+(v/1000).toFixed(1)+'k':'R$'+v,font:{size:11},color:'#8892A4'},
+          grid:{color:'rgba(0,0,0,.04)'},
+          border:{display:false}
+        },
+        x:{
+          ticks:{font:{size:11},color:'#8892A4'},
+          grid:{display:false},
+          border:{display:false}
+        }
+      }
+    }
   });
 }
 
@@ -1942,6 +2449,10 @@ function renderTransactions(){
   }
 
   empty.classList.add('hidden');
+
+    // Atualiza contador no header
+  const countEl = document.getElementById('cat-count-label');
+  if(countEl) countEl.textContent = `${state.categories.length} categoria${state.categories.length!==1?'s':''} cadastrada${state.categories.length!==1?'s':''}`;
 
   tbody.innerHTML = sorted.map(t => {
    const cat = state.categories.find(c => c.id === t.category) || { emoji: '📋', name: '—' };
@@ -2146,27 +2657,31 @@ function renderBanks(){
 
   grid.innerHTML = state.banks.map(b => {
     const isPositive = (b.balance || 0) >= 0;
+// NOVO
+    const bgGradient = BANK_COLORS[b.name] || BANK_COLORS_DEFAULT;
+    const typeLabel = {'corrente':'Conta Corrente','poupança':'Poupança','investimento':'Investimentos','digital':'Conta Digital'}[b.type] || b.type || 'Conta Corrente';
+
     return `
     <div class="bank-card">
-      <div class="bank-card-header">
-        <div style="display:flex;align-items:center;gap:12px">
-          <div style="width:46px;height:46px;border-radius:14px;background:var(--primary-light);display:flex;align-items:center;justify-content:center;font-size:24px">
-            ${BANK_EMOJIS[b.name] || '🏦'}
-          </div>
-          <div>
-            <div class="bank-name">${escHtml(b.name)}</div>
-            <div class="bank-type">${escHtml(b.type || 'Conta Corrente')}</div>
+      <div class="bank-card-top" style="background:${bgGradient}">
+        <div class="bank-card-logo-row">
+          <div class="bank-card-logo">${BANK_EMOJIS[b.name] || '🏦'}</div>
+          <div class="bank-card-actions">
+            <button class="icon-btn" onclick="openEditBank('${b.id}')">✏️</button>
+            <button class="icon-btn" onclick="deleteBank('${b.id}')">🗑️</button>
           </div>
         </div>
-        <div style="display:flex;gap:4px">
-          <button class="icon-btn" onclick="openEditBank('${b.id}')">✏️</button>
-          <button class="icon-btn" onclick="deleteBank('${b.id}')">🗑️</button>
-        </div>
+        <div class="bank-name">${escHtml(b.name)}</div>
+        <span class="bank-type-pill">${typeLabel}</span>
       </div>
-      <div style="margin-top:8px;padding-top:16px;border-top:1px solid var(--border)">
+
+      <div class="bank-card-bottom">
         <div class="bank-balance-label">Saldo disponível</div>
-        <div class="bank-balance" style="color:${isPositive?'var(--primary)':'var(--danger)'}">
+        <div class="bank-balance ${isPositive?'positive':'negative'}">
           ${fmtBRL(b.balance)}
+        </div>
+        <div class="bank-balance-hint ${isPositive?'positive':'negative'}">
+          ${isPositive ? '✅ Saldo positivo' : '⚠️ Saldo negativo'}
         </div>
       </div>
     </div>`;
@@ -2309,33 +2824,30 @@ function renderCards(){
     const barColor = pct>85?'var(--danger)':pct>60?'var(--warning)':'var(--success)';
     const hasBill = current > 0;
 
+// NOVO
     return `
-    <div class="cc-card">
-      <div style="display:flex;align-items:flex-start;justify-content:space-between;margin-bottom:12px">
+    <div class="cc-card" data-brand="${escHtml(c.brand)}">
+      <div style="display:flex;align-items:flex-start;justify-content:space-between">
         <div>
           <div class="cc-brand">${CARD_BRAND_EMOJIS[c.brand]||'💳'}</div>
           <div class="cc-name">${escHtml(c.name)}</div>
-          <div style="font-size:11px;color:var(--muted)">${escHtml(c.brand)}</div>
+          <div class="cc-subtitle">${escHtml(c.brand)}</div>
         </div>
         <div style="display:flex;gap:4px">
-          <button class="icon-btn" onclick="openEditCard('${c.id}')">✏️</button>
-          <button class="icon-btn" onclick="confirmDelete('card','${c.id}')">🗑️</button>
+          <button class="icon-btn" style="background:rgba(255,255,255,.15);color:#fff;border-radius:8px" onclick="openEditCard('${c.id}')">✏️</button>
+          <button class="icon-btn" style="background:rgba(255,255,255,.15);color:#fff;border-radius:8px" onclick="confirmDelete('card','${c.id}')">🗑️</button>
         </div>
       </div>
 
       <div class="cc-limit-bar">
         <div class="cc-limit-info">
-          <span>Fatura: <span class="cc-current">${fmtBRL(current)}</span></span>
-          <span>Limite: ${fmtBRL(limit)}</span>
+          <span>Fatura <span class="cc-current">${fmtBRL(current)}</span></span>
+          <span>Limite ${fmtBRL(limit)}</span>
         </div>
-
-        <div class="progress-bar">
-          <div class="progress-fill" style="width:${pct}%;background:${barColor}"></div>
+        <div class="cc-progress">
+          <div class="cc-progress-fill" style="width:${pct}%;background:${pct>85?'#ef4444':pct>60?'#f59e0b':'rgba(255,255,255,.85)'}"></div>
         </div>
-
-        <div style="font-size:11px;color:var(--muted);margin-top:2px">
-          ${pct}% utilizado · ${fmtBRL(limit- used)} disponível
-        </div>
+        <div class="cc-avail">${fmtBRL(limit - used)} disponível · ${pct}% usado</div>
       </div>
 
       <div class="cc-dates">
@@ -2343,20 +2855,18 @@ function renderCards(){
           <span>Fechamento</span>
           <strong>Dia ${c.closing||'—'}</strong>
         </div>
-        <div class="cc-date-item">
+        <div class="cc-date-item" style="text-align:center">
           <span>Vencimento</span>
           <strong>Dia ${c.due||'—'}</strong>
         </div>
+        ${hasBill ? `
+        <div class="cc-date-item" style="text-align:right">
+          <span>Pagar Fatura</span>
+          <strong style="cursor:pointer;text-decoration:underline" onclick="openPayInvoice('${c.id}')">
+            ${fmtBRL(current)} →
+          </strong>
+        </div>` : ''}
       </div>
-
-      ${hasBill ? `
-      <div style="margin-top:12px">
-        <button class="btn btn-sm btn-success btn-block" onclick="openPayInvoice('${c.id}')">
-          💳 Pagar Fatura ${fmtBRL(current)}
-        </button>
-      </div>
-      ` : ''}
-
     </div>`;
   }).join('');
 }
@@ -2550,7 +3060,46 @@ function renderGoals(){
   gridEl.innerHTML=state.goals.map(g=>{
     const pct=Math.min(100,Math.round((g.current/g.target)*100)||0);
     const done=pct>=100;
-    return `<div class="goal-card"><div class="goal-header"><span class="goal-name">${done?'✅ ':''} ${escHtml(g.name)}</span><div class="flex gap-8"><button class="icon-btn" onclick="openEditGoal('${g.id}')">✏️</button><button class="icon-btn" onclick="confirmDelete('goal','${g.id}')">🗑️</button></div></div><div class="goal-values"><span class="goal-current">${fmtBRL(g.current)}</span><span class="goal-target">de ${fmtBRL(g.target)}</span></div><div class="progress-bar"><div class="progress-fill" style="width:${pct}%;background:${done?'var(--success)':'var(--primary)'}"></div></div><div class="progress-label">${pct}% ${done?'— Meta concluída! 🎉':'concluído'}</div></div>`;
+    // NOVO
+    const goalIcons = ['🏠','✈️','🚗','📚','💊','💍','🏖️','🎓','💻','🐾','🌱','⚽'];
+    const icon = goalIcons[Math.abs(g.name.charCodeAt(0)) % goalIcons.length];
+    const remaining = g.target - g.current;
+
+    return `
+    <div class="goal-card ${done?'done':''}">
+      <div class="goal-header">
+        <div>
+          <div class="goal-icon">${icon}</div>
+          <div class="goal-name">${escHtml(g.name)}</div>
+          ${done
+            ? `<span class="goal-badge-done">✅ Concluída!</span>`
+            : `<span class="goal-badge-active">🎯 Em andamento</span>`}
+        </div>
+        <div style="display:flex;gap:4px;flex-shrink:0">
+          <button class="icon-btn" onclick="openEditGoal('${g.id}')">✏️</button>
+          <button class="icon-btn" onclick="confirmDelete('goal','${g.id}')">🗑️</button>
+        </div>
+      </div>
+
+      <div class="goal-values">
+        <span class="goal-current">${fmtBRL(g.current)}</span>
+        <span class="goal-target">
+          Meta
+          <span>${fmtBRL(g.target)}</span>
+        </span>
+      </div>
+
+      <div class="goal-progress-bar">
+        <div class="goal-progress-fill" style="width:${pct}%"></div>
+      </div>
+
+      <div class="goal-footer">
+        <span class="goal-pct">${pct}% ${done ? '🎉' : 'concluído'}</span>
+        ${done
+          ? `<span class="goal-remaining" style="color:var(--success);font-weight:700">Meta atingida!</span>`
+          : `<span class="goal-remaining">faltam ${fmtBRL(remaining)}</span>`}
+      </div>
+    </div>`;
   }).join('');
 }
 function openAddGoal(){
@@ -2597,7 +3146,23 @@ function renderCategories(){
   const empty=document.getElementById('categories-empty');
   if(!state.categories.length){grid.innerHTML='';empty.classList.remove('hidden');return;}
   empty.classList.add('hidden');
-  grid.innerHTML=state.categories.map(c=>`<div class="category-card"><span class="category-emoji">${c.emoji}</span><span class="category-name">${escHtml(c.name)}</span><div class="category-actions"><button class="icon-btn" onclick="openEditCategory('${c.id}')">✏️</button><button class="icon-btn" onclick="confirmDelete('category','${c.id}')">🗑️</button></div></div>`).join('');
+  // NOVO
+  grid.innerHTML=state.categories.map((c, i) => {
+    const bg   = CAT_BG_COLORS[i % CAT_BG_COLORS.length];
+    const color = CAT_ICON_COLORS[i % CAT_ICON_COLORS.length];
+    return `
+    <div class="category-card">
+      <div class="category-emoji-wrap" style="background:${bg}">
+        <span style="color:${color}">${c.emoji}</span>
+      </div>
+      <div class="category-name">${escHtml(c.name)}</div>
+      <div class="category-label">Categoria</div>
+      <div class="category-actions">
+        <button class="icon-btn" title="Editar" onclick="openEditCategory('${c.id}')">✏️</button>
+        <button class="icon-btn" title="Excluir" onclick="confirmDelete('category','${c.id}')">🗑️</button>
+      </div>
+    </div>`;
+  }).join('');
 }
 function buildEmojiPicker(selected){
   document.getElementById('emoji-picker').innerHTML=DEFAULT_EMOJIS.map(e=>`<button class="emoji-btn${e===selected?' selected':''}" onclick="selectEmoji('${e}')">${e}</button>`).join('');
