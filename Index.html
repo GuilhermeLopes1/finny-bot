@@ -57,6 +57,23 @@
   --sidebar-w:250px;
   --radius:18px;
 }
+
+/* === MODO ESCURO === */
+body.dark-mode {
+  --bg: #0f0f1a;
+  --card: #1a1a2e;
+  --text: #e8eaf0;
+  --muted: #7a85a0;
+  --border: #2a2a45;
+  --primary-light: #2a2655;
+}
+body.dark-mode .sidebar { background: #12121f; }
+body.dark-mode .topbar { background: rgba(15,15,26,.97); }
+body.dark-mode tr:hover td { background: #1e1e35; }
+body.dark-mode .tx-row:hover { background: #1e1e35; }
+body.dark-mode th { background: #12121f; }
+body.dark-mode .auth-card { background: #1a1a2e; }
+
 *{box-sizing:border-box;margin:0;padding:0;}
 body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(--text);min-height:100vh;}
 #auth-screen{display:flex;align-items:center;justify-content:center;min-height:100vh;background:linear-gradient(135deg,var(--primary) 0%,#a855f7 100%);}
@@ -296,6 +313,24 @@ body{font-family:'Segoe UI',system-ui,sans-serif;background:var(--bg);color:var(
 .stat-value.red{color:var(--danger);}
 .stat-value.orange{color:var(--warning);}
 .stat-value.blue{color:var(--primary);}
+
+/* Ocultar valores */
+body.hide-values .stat-value::after,
+body.hide-values .tx-amount::after,
+body.hide-values .amount-pos::after,
+body.hide-values .amount-neg::after,
+body.hide-values #greeting-balance::after {
+  content: '••••';
+}
+body.hide-values .stat-value,
+body.hide-values .tx-amount,
+body.hide-values .amount-pos,
+body.hide-values .amount-neg,
+body.hide-values #greeting-balance {
+  color: transparent;
+  text-shadow: 0 0 8px currentColor;
+  user-select: none;
+}
 
 .stat-change{font-size:11px;margin-top:6px;font-weight:600;}
 
@@ -1128,19 +1163,7 @@ tr:hover td{background:#F5F6FC;}
       <h2 id="app-name-display">💰 Allo Finanças</h2>
       <div><span class="plan-pill free" id="plan-pill">Gratuito</span></div>
     </div>
-<div class="phone-box" id="phone-box" style="flex-direction:column; gap:4px; padding: 10px 18px;">
-  <div style="font-size:11px; font-weight:700; color:var(--muted); text-transform:uppercase; letter-spacing:.04em;">📱 WhatsApp Bot</div>
-  <div style="display:flex; gap:6px;">
-    <input id="sidebar-phone" placeholder="5511999999999" maxlength="13"
-      style="flex:1; padding:8px 10px; border-radius:8px; border:1.5px solid var(--border); font-size:13px;"
-      oninput="this.value=this.value.replace(/\D/g,'')">
-    <button type="button" onclick="savePhone()" title="Salvar número"
-      style="padding:8px 12px; background:#25D366; color:white; border:none; border-radius:8px; cursor:pointer; font-size:16px;">
-      💾
-    </button>
-  </div>
-  <div style="font-size:10px; color:var(--muted);">Com DDI. Ex: 5511999999999</div>
-</div>
+
     <div class="nav">
       <div class="nav-section">Principal</div>
       <div class="nav-item active" data-page="dashboard" onclick="navigate('dashboard')"><span class="nav-icon">📊</span> Dashboard</div>
@@ -1178,10 +1201,18 @@ tr:hover td{background:#F5F6FC;}
         <button class="hamburger" onclick="toggleSidebar()">☰</button>
         <h1 id="page-title">Dashboard</h1>
       </div>
-      <div class="flex items-center gap-8">
-        <span id="topbar-date" class="text-muted"></span>
-        <button id="upgrade-topbar-btn" class="btn btn-xs btn-pro hidden" onclick="openUpgradeModal()">⭐ Upgrade Pro</button>
-      </div>
+<div class="flex items-center gap-8">
+  <span id="topbar-date" class="text-muted"></span>
+  <button id="theme-toggle-btn" onclick="toggleDarkMode()" title="Alternar tema"
+    style="background:none;border:1.5px solid var(--border);border-radius:10px;padding:6px 12px;cursor:pointer;font-size:16px;color:var(--text);">
+    🌙
+  </button>
+  <button id="hide-values-btn" onclick="toggleHideValues()" title="Esconder valores"
+  style="background:none;border:1.5px solid var(--border);border-radius:10px;padding:6px 12px;cursor:pointer;font-size:16px;color:var(--text);">
+  👁️
+</button>
+  <button id="upgrade-topbar-btn" class="btn btn-xs btn-pro hidden" onclick="openUpgradeModal()">⭐ Upgrade Pro</button>
+</div>
     </div>
 
     <div class="content">
@@ -1477,37 +1508,46 @@ tr:hover td{background:#F5F6FC;}
         </div>
       </div>
 
-      <div class="page" id="page-bot">
-  <div class="card" style="text-align:center; padding:40px;">
+<div class="page" id="page-bot">
+  <div class="card" style="text-align:center; padding:40px; max-width:520px; margin:0 auto;">
 
     <div style="font-size:60px;">🤖</div>
+    <h2 style="margin:12px 0 6px;">Fale com o FinnyBot</h2>
+    <p style="color:var(--muted); margin-bottom:24px;">Envie suas despesas direto pelo WhatsApp</p>
 
-    <h2>Fale com o FinnyBot</h2>
+    <!-- Badge verificado (oculto por padrão) -->
+    <div id="verified-badge" style="display:none; align-items:center; justify-content:center; gap:8px;
+      background:#dcfce7; color:#15803d; border-radius:12px; padding:10px 18px;
+      font-size:13px; font-weight:700; margin-bottom:20px;">
+      ✅ Conta verificada — Seu WhatsApp está conectado!
+    </div>
 
-    <p style="color:var(--muted); margin:10px 0 20px;">
-      Envie suas despesas direto pelo WhatsApp
-    </p>
+    <!-- Formulário para cadastrar número -->
+    <div id="bot-phone-form" style="margin-bottom:20px;">
+      <p style="font-size:13px; color:var(--muted); margin-bottom:10px;">
+        Cadastre seu número para ativar o bot:
+      </p>
+      <div style="display:flex; gap:8px; justify-content:center;">
+        <input id="bot-phone-input" placeholder="5511999999999" maxlength="13"
+          style="padding:10px 14px; border-radius:10px; border:1.5px solid var(--border);
+            font-size:14px; width:220px;"
+          oninput="this.value=this.value.replace(/\D/g,'')"/>
+        <button onclick="saveBotPhone()" class="btn btn-success">💾 Salvar</button>
+      </div>
+      <p style="font-size:11px; color:var(--muted); margin-top:6px;">Com DDI. Ex: 5511999999999</p>
+    </div>
 
-    <!-- BOTÃO -->
-    <a id="whatsapp-link" target="_blank" class="btn btn-success">
+    <!-- Botão WhatsApp -->
+    <a id="whatsapp-link" target="_blank" class="btn btn-success btn-block"
+      style="max-width:280px; margin:0 auto 12px;">
       📱 Abrir WhatsApp
     </a>
-
-    <!-- NÚMERO -->
-    <p id="bot-number" style="font-size:13px; margin-top:12px; font-weight:600;">
+    <p id="bot-number" style="font-size:13px; margin-top:8px; font-weight:600; color:var(--muted);">
       +1 (415) 523-8886
     </p>
-
-    <!-- EXEMPLO -->
-    <p style="font-size:12px; color:var(--muted); margin-top:10px;">
+    <p style="font-size:12px; color:var(--muted); margin-top:8px;">
       Ex: "gastei 50 no mercado"
     </p>
-
-    <!-- AVISO -->
-    <p style="font-size:11px; color:var(--muted); margin-top:6px;">
-      Bot internacional (WhatsApp dos EUA)
-    </p>
-
   </div>
 </div>
 
@@ -1792,7 +1832,7 @@ auth.onAuthStateChanged(async (user) => {
     const isAdminUser = user.email?.toLowerCase().trim() === ADMIN_EMAIL.toLowerCase().trim();
     state.user = {
       uid: user.uid, id: user.uid, email: user.email,
-      name: user.displayName, isAdmin: isAdminUser, isPro: isAdminUser
+      name: user.displayName || user.email?.split('@')[0], isAdmin: isAdminUser, isPro: isAdminUser
     };
     state.isAdmin = isAdminUser;
 
@@ -1816,12 +1856,44 @@ auth.onAuthStateChanged(async (user) => {
 <script>
 
 function renderBotPage(){
-  const phone = "14155238886";
+  const botPhone = "14155238886";
   const msg = encodeURIComponent("Oi, quero usar o FinnyBot");
+  document.getElementById("whatsapp-link").href = `https://wa.me/${botPhone}?text=${msg}`;
 
-  const link = `https://wa.me/${phone}?text=${msg}`;
+  // Verifica se usuário já tem número cadastrado
+  if(!state.user) return;
+  db.collection("users").doc(state.user.uid).get().then(doc => {
+    const data = doc.data() || {};
+    const badge = document.getElementById("verified-badge");
+    const form  = document.getElementById("bot-phone-form");
+    const inp   = document.getElementById("bot-phone-input");
+    if(data.phoneNumber && data.phoneNumber.length > 5){
+      badge.style.display = "flex";
+      form.style.display  = "none";
+      if(inp) inp.value = data.phoneNumber;
+    } else {
+      badge.style.display = "none";
+      form.style.display  = "block";
+    }
+  });
+}
 
-  document.getElementById("whatsapp-link").href = link;
+async function saveBotPhone(){
+  const input = document.getElementById("bot-phone-input");
+  let phone = input.value.trim().replace(/\D/g,'');
+  if(!phone || phone.length < 10){
+    toast('Informe um número válido com DDI. Ex: 5511999999999');
+    return;
+  }
+  if(!phone.startsWith('55')) phone = '55' + phone;
+  try {
+    await db.collection("users").doc(state.user.uid)
+      .set({ phoneNumber: phone }, { merge: true });
+    toast('✅ Número cadastrado com sucesso!');
+    renderBotPage(); // atualiza badge
+  } catch(e){
+    toast('Erro ao salvar número.');
+  }
 }
 
 </script>
@@ -1854,14 +1926,7 @@ db.collection("users")
     console.log("⚡ atualização em tempo real");
 
     // 🔥 👉 COLOCA AQUI
-   const phoneBox = document.getElementById("phone-box");
-const input = document.getElementById("sidebar-phone");
 
-if (data.phoneNumber && data.phoneNumber.length > 5) {
-  phoneBox.style.display = "none";
-} else {
-  phoneBox.style.display = "flex";
-}
 
     // 🔥 atualiza tela automaticamente
     if(state.currentPage === 'dashboard') renderDashboard();
@@ -2148,6 +2213,33 @@ async function bootApp(){
   startRealtimeSync(); 
 
   // if(state.isAdmin) loadGlobalSettings();
+
+  function toggleDarkMode(){
+  const isDark = document.body.classList.toggle('dark-mode');
+  localStorage.setItem('darkMode', isDark ? '1' : '0');
+  document.getElementById('theme-toggle-btn').textContent = isDark ? '☀️' : '🌙';
+}
+// Aplica modo salvo ao carregar
+(function(){
+  if(localStorage.getItem('darkMode') === '1'){
+    document.body.classList.add('dark-mode');
+    const btn = document.getElementById('theme-toggle-btn');
+    if(btn) btn.textContent = '☀️';
+  }
+})();
+
+function toggleHideValues(){
+  const hide = document.body.classList.toggle('hide-values');
+  localStorage.setItem('hideValues', hide ? '1' : '0');
+  document.getElementById('hide-values-btn').textContent = hide ? '🙈' : '👁️';
+}
+(function(){
+  if(localStorage.getItem('hideValues') === '1'){
+    document.body.classList.add('hide-values');
+    const btn = document.getElementById('hide-values-btn');
+    if(btn) btn.textContent = '🙈';
+  }
+})();
 
   applySettings();
 
