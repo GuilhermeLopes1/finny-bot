@@ -154,12 +154,19 @@ app.post('/webhook-mp', async (req, res) => {
     // Ativa PRO no Firestore
     const { getDb } = require('./config/firebase');
     const db = getDb();
+    const now = new Date();
+    const days = plan === 'yearly' ? 365 : 30;
+    const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+
     await db.collection('users').doc(userId).set({
       isPro: true,
-      proSince: new Date().toISOString(),
+      proSince: now.toISOString(),
       proPlan: plan || 'monthly',
-      proPaymentId: String(paymentId)
+      proPaymentId: String(paymentId),
+      proExpiresAt: expiresAt
     }, { merge: true });
+
+    console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
 
     console.log('✅ PRO ativado para:', userId);
   } catch(e) {
@@ -245,6 +252,50 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
+
+// ─────────────────────────────────────────────
+// JOB DIÁRIO — VERIFICA EXPIRAÇÃO DO PRO
+// ─────────────────────────────────────────────
+async function checkProExpirations(){
+  try {
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const now = new Date();
+    const snap = await db.collection('users').where('isPro','==',true).get();
+
+    for(const doc of snap.docs){
+      const data = doc.data();
+      if(!data.proExpiresAt) continue;
+
+      const expiresAt = new Date(data.proExpiresAt);
+      const daysLeft = Math.ceil((expiresAt - now) / (1000*60*60*24));
+
+      // Desativa se expirou
+      if(daysLeft <= 0){
+        await db.collection('users').doc(doc.id).set({
+          isPro: false,
+          proExpired: true,
+          proExpiredAt: now.toISOString()
+        }, { merge: true });
+        console.log('❌ PRO expirado para:', doc.id);
+        continue;
+      }
+
+      // Salva dias restantes para o app exibir
+      await db.collection('users').doc(doc.id).set({
+        proDaysLeft: daysLeft
+      }, { merge: true });
+
+      console.log('⏳ PRO:', doc.id, '- dias restantes:', daysLeft);
+    }
+  } catch(e){
+    console.error('checkProExpirations error:', e);
+  }
+}
+
+// Roda imediatamente e depois a cada 24h
+checkProExpirations();
+setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 
 // ─────────────────────────────────────────────
 // START
