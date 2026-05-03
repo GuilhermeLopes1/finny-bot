@@ -22,6 +22,7 @@
     "twilio": "^4.19.0",
     "uuid": "^9.0.0",
     "winston": "^3.11.0"
+    "@anthropic-ai/sdk": "^0.39.0",
   },
   "devDependencies": {
     "eslint": "^8.54.0",
