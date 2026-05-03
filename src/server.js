@@ -62,8 +62,8 @@ app.post('/import-pdf', upload.single('file'), async (req, res) => {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const ano = new Date().getFullYear();
-    const prompt = 'Voce e um especialista em faturas de cartao de credito brasileiro. Analise o texto abaixo e extraia APENAS os lancamentos da secao "Lancamentos" ou "Historico de Lancamentos".\n\nRETORNE APENAS JSON PURO SEM MARKDOWN:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"YYYY-MM-DD"}]}\n\nRegras IMPORTANTES:\n- Extraia SOMENTE linhas com data (formato DD/MM) + descricao + valor\n- type expense = compras, encargos, IOF, anuidade, parcelas\n- type income = pagamentos de boleto (PAG BOLETO), creditos recebidos\n- amount sempre numero positivo sem R$\n- date: DD/MM vira ' + ano + '-MM-DD\n- desc curta e limpa, sem codigos\n- IGNORE: saldo anterior, resumo da fatura, totais, limites, taxas mensais, mensagens\n- Lancamentos validos desta fatura:\n  PAG BOLETO BANCARIO, CUSTO TRANS EXTERIOR, PARC FACIL, ANUIDADE, CREAO AI LIMITED\n\nTexto da fatura:\n' + text.slice(0, 8000);
-    const message = await client.messages.create({
+    const prompt = 'Analise este texto de fatura bancaria brasileira. RETORNE APENAS JSON PURO:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"' + ano + '-MM-DD"}]}\n\nExtraia todos os itens que tenham: data no formato DD/MM + texto descritivo + valor numerico.\nExemplos do que extrair:\n10/04 PAG BOLETO BANCARIO 146,88 -> income\n28/04 CUSTO TRANS EXTERIOR IOF 6,13 -> expense\n27/04 ANUIDADE DIFERENCIADA 33,00 -> expense\n27/04 CREAO AI LIMITED 70,61 -> expense\n\nSe nao encontrar lancamentos com data+descricao+valor, retorne {"transactions":[{"desc":"Lancamento fatura","amount":253.75,"type":"expense","date":"' + ano + '-04-28"}]}\n\nTexto:\n' + text;
+const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }]
