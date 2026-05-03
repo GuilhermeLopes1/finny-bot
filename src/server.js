@@ -47,16 +47,33 @@ app.post('/register', handleRegisterUser);
 // ─────────────────────────────────────────────
 app.post('/ai-analysis', async (req, res) => {
   try {
-    const { prompt } = req.body;
+    const { prompt, image, imageType } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Prompt obrigatório' });
 
     const Anthropic = require('@anthropic-ai/sdk');
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
+    let content;
+    if (image) {
+      content = [
+        {
+          type: 'image',
+          source: {
+            type: 'base64',
+            media_type: imageType || 'image/jpeg',
+            data: image
+          }
+        },
+        { type: 'text', text: prompt }
+      ];
+    } else {
+      content = prompt;
+    }
+
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }]
+      messages: [{ role: 'user', content }]
     });
 
     res.json({ text: message.content?.[0]?.text || '' });
@@ -65,7 +82,6 @@ app.post('/ai-analysis', async (req, res) => {
     res.status(500).json({ error: e.message || 'Erro ao consultar IA' });
   }
 });
-
 /**
  * Health check
  */
