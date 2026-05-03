@@ -77,6 +77,97 @@ const message = await client.messages.create({
 });
 
 // ─────────────────────────────────────────────
+// MERCADO PAGO — CRIAR PAGAMENTO
+// ─────────────────────────────────────────────
+app.post('/create-payment', async (req, res) => {
+  try {
+    const { plan, userId, userEmail, userName } = req.body;
+    if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+
+    const prices = { monthly: 9.90, yearly: 89.90 };
+    const labels = { monthly: 'Mensal', yearly: 'Anual' };
+    const price = prices[plan] || 9.90;
+    const label = labels[plan] || 'Mensal';
+
+    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+      },
+      body: JSON.stringify({
+        items: [{
+          title: 'Allo Finanças Pro — ' + label,
+          quantity: 1,
+          currency_id: 'BRL',
+          unit_price: price
+        }],
+        payer: {
+          email: userEmail || '',
+          name: userName || ''
+        },
+        external_reference: userId + '|' + plan,
+        back_urls: {
+          success: 'https://allofinancas.netlify.app?payment=success',
+          failure: 'https://allofinancas.netlify.app?payment=failure',
+          pending: 'https://allofinancas.netlify.app?payment=pending'
+        },
+        auto_return: 'approved',
+        notification_url: 'https://finny-bot.onrender.com/webhook-mp'
+      })
+    });
+
+    const data = await response.json();
+    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    res.json({ url: data.init_point });
+  } catch(e) {
+    console.error('MP error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// MERCADO PAGO — WEBHOOK
+// ─────────────────────────────────────────────
+app.post('/webhook-mp', async (req, res) => {
+  try {
+    res.sendStatus(200); // Responde imediatamente para o MP
+
+    const { type, data } = req.body;
+    if(type !== 'payment') return;
+
+    const paymentId = data?.id;
+    if(!paymentId) return;
+
+    // Busca detalhes do pagamento
+    const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
+      headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+    });
+    const pmt = await pmtRes.json();
+
+    if(pmt.status !== 'approved') return;
+
+    // external_reference = userId|plan
+    const [userId, plan] = (pmt.external_reference || '').split('|');
+    if(!userId) return;
+
+    // Ativa PRO no Firestore
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    await db.collection('users').doc(userId).set({
+      isPro: true,
+      proSince: new Date().toISOString(),
+      proPlan: plan || 'monthly',
+      proPaymentId: String(paymentId)
+    }, { merge: true });
+
+    console.log('✅ PRO ativado para:', userId);
+  } catch(e) {
+    console.error('Webhook MP error:', e);
+  }
+});
+
+// ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
 app.post('/ai-analysis', async (req, res) => {
