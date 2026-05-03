@@ -1,12 +1,13 @@
 /**
- * AI Service — OpenAI GPT integration
+ * AI Service — Anthropic Claude integration
  * Handles intent detection, transaction extraction, and conversational responses
  */
 
-const OpenAI = require('openai');
+const Anthropic = require('@anthropic-ai/sdk');
 const logger = require('../utils/logger');
 
-const openai = new OpenAI({ apiKey: process.env.OPENAI_API_KEY });
+const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+const MODEL = 'claude-haiku-4-5-20251001';
 
 // ─────────────────────────────────────────────
 // SYSTEM PROMPT
@@ -41,102 +42,52 @@ tecnologia, assinaturas, salário, freelance, investimentos, outros
 - Use emojis com moderação (apenas quando ajudam)
 - Nunca invente dados financeiros
 - Se não entender, peça esclarecimento de forma natural
-- Datas relativas: "ontem", "semana passada", "mês passado" devem ser interpretadas corretamente
-`;
+- Datas relativas: "ontem", "semana passada", "mês passado" devem ser interpretadas corretamente`;
 
 // ─────────────────────────────────────────────
 // INTENT DETECTION
 // ─────────────────────────────────────────────
 
-const INTENT_SCHEMA = {
-  type: 'object',
-  properties: {
-    intent: {
-      type: 'string',
-      enum: [
-        'create_transaction',
-        'create_multiple_transactions',
-        'query_expenses',
-        'query_income',
-        'query_balance',
-        'query_category',
-        'monthly_summary',
-        'set_goal',
-        'check_goal',
-        'greeting',
-        'help',
-        'unknown',
-      ],
-    },
-    confidence: { type: 'number', minimum: 0, maximum: 1 },
-    transactions: {
-      type: 'array',
-      items: {
-        type: 'object',
-        properties: {
-          type: { type: 'string', enum: ['expense', 'income'] },
-          amount: { type: 'number' },
-          description: { type: 'string' },
-          category: { type: 'string' },
-          date: { type: 'string', description: 'ISO 8601 date or null for today' },
-        },
-        required: ['type', 'amount', 'description', 'category'],
-      },
-    },
-    filters: {
-      type: 'object',
-      properties: {
-        period: { type: 'string', enum: ['today', 'week', 'month', 'last_month', 'custom'] },
-        category: { type: 'string' },
-        type: { type: 'string', enum: ['expense', 'income', 'all'] },
-        startDate: { type: 'string' },
-        endDate: { type: 'string' },
-      },
-    },
-    clarification_needed: { type: 'boolean' },
-    clarification_question: { type: 'string' },
-  },
-  required: ['intent', 'confidence'],
-};
-
-/**
- * Parse user message intent using GPT with structured output
- */
 async function parseIntent(userMessage, conversationHistory = []) {
   const today = new Date().toISOString().split('T')[0];
 
-  const messages = [
-    {
-      role: 'system',
-      content: `${SYSTEM_PROMPT}
+  const historyFormatted = conversationHistory.slice(-6).map(m => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.content
+  }));
+
+  const prompt = `${SYSTEM_PROMPT}
 
 Hoje é ${today}. Analise a mensagem do usuário e retorne um JSON estruturado identificando a intenção e extraindo dados relevantes.
 
 Para transações, extraia: type (expense/income), amount (número), description, category, date (ISO ou null para hoje).
 Para consultas, extraia: period (today/week/month/last_month), category (se mencionada), type (expense/income/all).
 
-Retorne APENAS JSON válido, sem markdown, sem explicações.`,
-    },
-    ...conversationHistory.slice(-6), // Last 6 messages for context
-    { role: 'user', content: userMessage },
-  ];
+Intents possíveis: create_transaction, create_multiple_transactions, query_expenses, query_income, query_balance, query_category, monthly_summary, set_goal, check_goal, greeting, help, unknown.
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages,
-    response_format: { type: 'json_object' },
-    temperature: 0.1, // Low temp for consistent parsing
-    max_tokens: 500,
-  });
+Retorne APENAS JSON válido, sem markdown, sem explicações.
 
-  const raw = response.choices[0].message.content;
+Mensagem do usuário: "${userMessage}"`;
 
   try {
-    const parsed = JSON.parse(raw);
+    const messages = [
+      ...historyFormatted,
+      { role: 'user', content: prompt }
+    ];
+
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 500,
+      messages
+    });
+
+    const raw = response.content[0].text.trim();
+    const clean = raw.replace(/```json/gi, '').replace(/```/g, '').trim();
+    const parsed = JSON.parse(clean);
     logger.info(`Intent parsed: ${parsed.intent} (confidence: ${parsed.confidence})`);
     return parsed;
   } catch (e) {
-    logger.error('Failed to parse intent JSON:', raw);
+    logger.error('Failed to parse intent:', e.message);
     return { intent: 'unknown', confidence: 0 };
   }
 }
@@ -145,50 +96,40 @@ Retorne APENAS JSON válido, sem markdown, sem explicações.`,
 // CONVERSATIONAL RESPONSE
 // ─────────────────────────────────────────────
 
-/**
- * Generate a natural conversational response given context and data
- */
 async function generateResponse(userMessage, context, conversationHistory = []) {
-  const messages = [
-    { role: 'system', content: SYSTEM_PROMPT },
-    ...conversationHistory.slice(-8),
-    {
-      role: 'user',
-      content: userMessage,
-    },
-    {
-      role: 'system',
-      content: `Contexto dos dados financeiros para responder: ${JSON.stringify(context)}
-      
-Responda de forma natural, amigável e concisa em português brasileiro. 
-Use os dados do contexto para dar uma resposta precisa.
-Formate valores monetários como R$X.XXX,XX quando relevante.`,
-    },
-  ];
+  const historyFormatted = conversationHistory.slice(-8).map(m => ({
+    role: m.role === 'assistant' ? 'assistant' : 'user',
+    content: m.content
+  }));
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages,
-    temperature: 0.7,
-    max_tokens: 300,
-  });
+  const userContent = `${userMessage}\n\nContexto dos dados financeiros: ${JSON.stringify(context)}\n\nResponda de forma natural, amigável e concisa em português brasileiro. Use os dados do contexto para dar uma resposta precisa. Formate valores monetários como R$X.XXX,XX quando relevante.`;
 
-  return response.choices[0].message.content.trim();
+  try {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 300,
+      system: SYSTEM_PROMPT,
+      messages: [
+        ...historyFormatted,
+        { role: 'user', content: userContent }
+      ]
+    });
+
+    return response.content[0].text.trim();
+  } catch (e) {
+    logger.error('generateResponse error:', e.message);
+    return 'Desculpe, tive um problema ao processar sua mensagem. Tente novamente. 😊';
+  }
 }
 
 // ─────────────────────────────────────────────
 // SMART ALERTS
 // ─────────────────────────────────────────────
 
-/**
- * Generate smart alerts based on spending patterns
- */
 async function generateSmartAlerts(comparison) {
   const { thisMonth, lastMonth, expenseDiff } = comparison;
-
   const alerts = [];
 
-  // Overall expense increase
   if (expenseDiff !== null && expenseDiff > 30) {
     alerts.push({
       type: 'expense_spike',
@@ -196,7 +137,6 @@ async function generateSmartAlerts(comparison) {
     });
   }
 
-  // Category spikes
   for (const [category, amount] of Object.entries(thisMonth.byCategory)) {
     const lastAmount = lastMonth.byCategory[category] || 0;
     if (lastAmount > 0) {
@@ -211,7 +151,6 @@ async function generateSmartAlerts(comparison) {
     }
   }
 
-  // Positive: saving more
   if (thisMonth.balance > 0 && lastMonth.balance > 0 && thisMonth.balance > lastMonth.balance) {
     alerts.push({
       type: 'savings_improvement',
@@ -222,9 +161,6 @@ async function generateSmartAlerts(comparison) {
   return alerts;
 }
 
-/**
- * Generate goal proximity alerts
- */
 async function generateGoalAlerts(goals, summary) {
   const alerts = [];
 
@@ -250,9 +186,6 @@ async function generateGoalAlerts(goals, summary) {
   return alerts;
 }
 
-/**
- * Generate a full monthly summary narrative using GPT
- */
 async function generateMonthlySummaryNarrative(summary, alerts = []) {
   const prompt = `Com base nos dados financeiros abaixo, gere um resumo mensal amigável e informativo em português brasileiro para WhatsApp. Seja conciso (máx 8 linhas), use emojis relevantes.
 
@@ -269,17 +202,19 @@ Formato sugerido:
 ...dados...
 💡 Insight...`;
 
-  const response = await openai.chat.completions.create({
-    model: 'gpt-4o-mini',
-    messages: [
-      { role: 'system', content: 'Você é um assistente financeiro. Responda em pt-BR.' },
-      { role: 'user', content: prompt },
-    ],
-    temperature: 0.6,
-    max_tokens: 400,
-  });
+  try {
+    const response = await client.messages.create({
+      model: MODEL,
+      max_tokens: 400,
+      system: 'Você é um assistente financeiro. Responda em pt-BR.',
+      messages: [{ role: 'user', content: prompt }]
+    });
 
-  return response.choices[0].message.content.trim();
+    return response.content[0].text.trim();
+  } catch (e) {
+    logger.error('generateMonthlySummaryNarrative error:', e.message);
+    return '📊 Não foi possível gerar o resumo. Tente novamente.';
+  }
 }
 
 module.exports = {
