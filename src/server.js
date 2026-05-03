@@ -108,11 +108,12 @@ app.post('/create-payment', async (req, res) => {
         },
         external_reference: userId + '|' + plan,
         back_urls: {
-          success: 'https://allofinancas.netlify.app?payment=success',
-          failure: 'https://allofinancas.netlify.app?payment=failure',
-          pending: 'https://allofinancas.netlify.app?payment=pending'
+          success: 'https://allofinancas.netlify.app/?payment=success',
+          failure: 'https://allofinancas.netlify.app/?payment=failure',
+          pending: 'https://allofinancas.netlify.app/?payment=pending'
         },
         auto_return: 'approved',
+        statement_descriptor: 'Allo Financas Pro',
         notification_url: 'https://finny-bot.onrender.com/webhook-mp'
       })
     });
