@@ -62,8 +62,7 @@ app.post('/import-pdf', upload.single('file'), async (req, res) => {
     const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
 
     const ano = new Date().getFullYear();
-    const prompt = 'Voce e um especialista em faturas de cartao de credito brasileiro. Extraia os lancamentos do texto abaixo.\n\nRETORNE APENAS JSON PURO SEM MARKDOWN:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"YYYY-MM-DD"}]}\n\nRegras:\n- type expense = compras/debitos, type income = pagamentos recebidos\n- amount sempre positivo\n- date formato YYYY-MM-DD usando ano ' + ano + '\n- desc curta e limpa\n- Ignore totais, limites, taxas de juros, cabecalhos\n\nTexto:\n' + text.slice(0, 8000);
-
+    const prompt = 'Voce e um especialista em faturas de cartao de credito brasileiro. Analise o texto abaixo e extraia APENAS os lancamentos da secao "Lancamentos" ou "Historico de Lancamentos".\n\nRETORNE APENAS JSON PURO SEM MARKDOWN:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"YYYY-MM-DD"}]}\n\nRegras IMPORTANTES:\n- Extraia SOMENTE linhas com data (formato DD/MM) + descricao + valor\n- type expense = compras, encargos, IOF, anuidade, parcelas\n- type income = pagamentos de boleto (PAG BOLETO), creditos recebidos\n- amount sempre numero positivo sem R$\n- date: DD/MM vira ' + ano + '-MM-DD\n- desc curta e limpa, sem codigos\n- IGNORE: saldo anterior, resumo da fatura, totais, limites, taxas mensais, mensagens\n- Lancamentos validos desta fatura:\n  PAG BOLETO BANCARIO, CUSTO TRANS EXTERIOR, PARC FACIL, ANUIDADE, CREAO AI LIMITED\n\nTexto da fatura:\n' + text.slice(0, 8000);
     const message = await client.messages.create({
       model: 'claude-haiku-4-5-20251001',
       max_tokens: 2000,
