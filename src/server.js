@@ -43,6 +43,41 @@ const { handleRegisterUser } = require('./controllers/webhookController');
 app.post('/register', handleRegisterUser);
 
 // ─────────────────────────────────────────────
+// PDF IMPORT ROUTE
+// ─────────────────────────────────────────────
+const multer = require('multer');
+const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+
+app.post('/import-pdf', upload.single('file'), async (req, res) => {
+  try {
+    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
+
+    const pdfParse = require('pdf-parse');
+    const data = await pdfParse(req.file.buffer);
+    const text = data.text || '';
+
+    if (!text.trim()) return res.status(400).json({ error: 'PDF sem texto legível' });
+
+    const Anthropic = require('@anthropic-ai/sdk');
+    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
+
+    const ano = new Date().getFullYear();
+    const prompt = 'Voce e um especialista em faturas de cartao de credito brasileiro. Extraia os lancamentos do texto abaixo.\n\nRETORNE APENAS JSON PURO SEM MARKDOWN:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"YYYY-MM-DD"}]}\n\nRegras:\n- type expense = compras/debitos, type income = pagamentos recebidos\n- amount sempre positivo\n- date formato YYYY-MM-DD usando ano ' + ano + '\n- desc curta e limpa\n- Ignore totais, limites, taxas de juros, cabecalhos\n\nTexto:\n' + text.slice(0, 8000);
+
+    const message = await client.messages.create({
+      model: 'claude-haiku-4-5-20251001',
+      max_tokens: 2000,
+      messages: [{ role: 'user', content: prompt }]
+    });
+
+    res.json({ text: message.content?.[0]?.text || '' });
+  } catch (e) {
+    console.error('PDF import error:', e);
+    res.status(500).json({ error: e.message || 'Erro ao processar PDF' });
+  }
+});
+
+// ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
 app.post('/ai-analysis', async (req, res) => {
