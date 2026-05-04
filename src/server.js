@@ -299,6 +299,55 @@ checkProExpirations();
 setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 
 // ─────────────────────────────────────────────
+// RESUMO SEMANAL — TODO DOMINGO ÀS 9H
+// ─────────────────────────────────────────────
+async function sendWeeklySummaries(){
+  try {
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const snap = await db.collection('users').where('phoneNumber','!=','').get();
+
+    for(const doc of snap.docs){
+      const data = doc.data();
+      if(!data.phoneNumber) continue;
+
+      const txs = data.transactions || [];
+      const now = new Date();
+      const weekAgo = new Date(now.getTime() - 7*24*60*60*1000);
+
+      const weekTxs = txs.filter(t=> new Date(t.date) >= weekAgo);
+      const income = weekTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+      const expense = weekTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+      const balance = income - expense;
+
+      const msg = `📊 *Resumo da semana — Allo Finanças*\n\n`
+        +`📈 Receitas: R$${income.toFixed(2).replace('.',',')}\n`
+        +`📉 Despesas: R$${expense.toFixed(2).replace('.',',')}\n`
+        +`💰 Saldo: ${balance>=0?'+':''}R$${balance.toFixed(2).replace('.',',')}\n`
+        +`📋 Transações: ${weekTxs.length}\n\n`
+        +`_Acesse o app para mais detalhes: allofinancas.netlify.app/app_`;
+
+      await client.messages.create({
+        from: 'whatsapp:+14155238886',
+        to: `whatsapp:+${data.phoneNumber}`,
+        body: msg
+      });
+    }
+    console.log('✅ Resumos semanais enviados');
+  } catch(e){
+    console.error('sendWeeklySummaries error:', e);
+  }
+}
+
+// Verifica todo dia se é domingo e 9h
+setInterval(()=>{
+  const now = new Date();
+  if(now.getDay()===0 && now.getHours()===9 && now.getMinutes()<2){
+    sendWeeklySummaries();
+  }
+}, 60*1000);
+
+// ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 
