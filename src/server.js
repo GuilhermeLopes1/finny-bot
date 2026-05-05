@@ -10,6 +10,7 @@ require('dotenv').config();
 const express = require('express');
 const morgan = require('morgan');
 const cors = require('cors');
+const crypto = require('crypto');
 require('./config/firebase');
 const { handleWebhook, handleHealthCheck } = require('./controllers/webhookController');
 const { rateLimiter } = require('./middleware/rateLimiter');
@@ -172,11 +173,39 @@ app.post('/cancel-subscription', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// MERCADO PAGO — WEBHOOK RECORRENTE
+function verifyMercadoPagoSignature(req) {
+  const signature = req.headers['x-signature'];
+  const secret = process.env.MP_WEBHOOK_SECRET;
+
+  if (!signature || !secret) return false;
+
+  const parts = signature.split(',');
+  const hashPart = parts.find(p => p.startsWith('v1='));
+  if (!hashPart) return false;
+
+  const receivedHash = hashPart.replace('v1=', '');
+
+  const generatedHash = crypto
+    .createHmac('sha256', secret)
+    .update(JSON.stringify(req.body))
+    .digest('hex');
+
+  return generatedHash === receivedHash;
+}
+
 // ─────────────────────────────────────────────
 app.post('/webhook-mp', async (req, res) => {
   try {
+
+    // 🔐 valida assinatura
+if (process.env.NODE_ENV === 'production') {
+  if (!verifyMercadoPagoSignature(req)) {
+    console.warn('❌ Webhook inválido');
+    return res.sendStatus(401);
+  }
+}
+
+    // responde rápido pro Mercado Pago
     res.sendStatus(200);
 
     const { type, data } = req.body;
@@ -215,7 +244,7 @@ app.post('/webhook-mp', async (req, res) => {
       console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
     }
 
-    // Assinatura criada/atualizada — salva o ID
+    // Assinatura criada/atualizada
     if(type === 'subscription_preapproval'){
       const subId = data?.id;
       if(!subId) return;
