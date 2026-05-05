@@ -141,7 +141,9 @@ app.post('/cancel-subscription', async (req, res) => {
     const userData = userDoc.data() || {};
     const subscriptionId = userData.proSubscriptionId;
 
-    if(!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+    if(!subscriptionId || userData.proSubscriptionStatus !== 'authorized'){
+  return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+}
 
     // Cancela no Mercado Pago
     const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${subscriptionId}`, {
