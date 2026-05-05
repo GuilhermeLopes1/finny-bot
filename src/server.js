@@ -198,14 +198,18 @@ app.post('/webhook-mp', async (req, res) => {
   try {
 
     // 🔐 valida assinatura
+    const { type, data } = req.body;
+  if(!type || !data){
+  console.warn('Webhook inválido (sem dados)');
+  return res.sendStatus(400);
+}
 // ⚠️ TEMPORÁRIO — desativar validação
 // Mercado Pago webhook signature é complexa
 // vamos validar depois corretamente
 
     // responde rápido pro Mercado Pago
     res.sendStatus(200);
-
-    const { type, data } = req.body;
+    
     console.log('Webhook MP:', type, data);
 
     const { getDb } = require('./config/firebase');
@@ -253,7 +257,7 @@ app.post('/webhook-mp', async (req, res) => {
       });
       const sub = await subRes.json();
 
-      const [userId] = (sub.external_reference || '').split('|');
+      const [userId, plan] = (sub.external_reference || '').split('|');
       if(!userId) return;
 
       await db.collection('users').doc(userId).set({
@@ -263,6 +267,45 @@ app.post('/webhook-mp', async (req, res) => {
 
       console.log('📋 Assinatura salva:', subId, 'status:', sub.status);
     }
+    if(type === 'subscription_authorized_payment'){
+  const subId = data?.id;
+  if(!subId) return;
+
+  const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
+    headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+  });
+
+  const sub = await subRes.json();
+
+  const [userId, plan] = (sub.external_reference || '').split('|');
+  if(!userId) return;
+
+   // 🔐 EVITA DUPLICAR PRO
+  const userRef = db.collection('users').doc(userId);
+  const userSnap = await userRef.get();
+  const userData = userSnap.data() || {};
+
+  if(userData.isPro){
+    console.log('⚠️ Usuário já é PRO:', userId);
+    return;
+  }
+
+  const now = new Date();
+  const days = plan === 'yearly' ? 365 : 30;
+  const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+
+  await db.collection('users').doc(userId).set({
+    isPro: true,
+    proSince: now.toISOString(),
+    proPlan: plan || 'monthly',
+    proSubscriptionId: subId,
+    proSubscriptionStatus: 'authorized',
+    proExpiresAt: expiresAt,
+    proCancelled: false
+  }, { merge: true });
+
+  console.log('🔥 PRO ativado via assinatura:', userId);
+}
 
   } catch(e) {
     console.error('Webhook MP error:', e);
