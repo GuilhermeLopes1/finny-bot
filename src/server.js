@@ -220,6 +220,8 @@ app.post('/webhook-mp', async (req, res) => {
         headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
       });
       const pmt = await pmtRes.json();
+      console.log('STATUS PAGAMENTO:', pmt.status);
+      console.log('PAYMENT COMPLETO:', pmt);
       if(pmt.status !== 'approved') return;
 
       const [userId, plan] = (pmt.external_reference || '').split('|');
