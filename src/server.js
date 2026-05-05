@@ -77,49 +77,48 @@ const message = await client.messages.create({
 });
 
 // ─────────────────────────────────────────────
-// MERCADO PAGO — CRIAR PAGAMENTO
+// ─────────────────────────────────────────────
+// MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
 // ─────────────────────────────────────────────
 app.post('/create-payment', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
-    const prices = { monthly: 9.90, yearly: 89.90 };
-    const labels = { monthly: 'Mensal', yearly: 'Anual' };
-    const price = prices[plan] || 9.90;
-    const label = labels[plan] || 'Mensal';
+    const prices   = { monthly: 9.90, yearly: 89.90 };
+    const labels   = { monthly: 'Mensal', yearly: 'Anual' };
+    const freqs    = { monthly: 'months', yearly: 'years' };
+    const price    = prices[plan] || 9.90;
+    const label    = labels[plan] || 'Mensal';
+    const freq     = freqs[plan]  || 'months';
 
-    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+    const response = await fetch('https://api.mercadopago.com/preapproval', {
       method: 'POST',
       headers: {
         'Content-Type': 'application/json',
         'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        items: [{
-          title: 'Allo Finanças Pro — ' + label,
-          quantity: 1,
-          currency_id: 'BRL',
-          unit_price: price
-        }],
-        payer: {
-          email: userEmail || '',
-          name: userName || ''
-        },
+        preapproval_plan_id: null,
+        reason: 'Allo Finanças Pro — ' + label,
         external_reference: userId + '|' + plan,
-        back_urls: {
-          success: 'https://allofinancas.netlify.app/?payment=success',
-          failure: 'https://allofinancas.netlify.app/?payment=failure',
-          pending: 'https://allofinancas.netlify.app/?payment=pending'
+        payer_email: userEmail || '',
+        auto_recurring: {
+          frequency: 1,
+          frequency_type: freq,
+          transaction_amount: price,
+          currency_id: 'BRL'
         },
-        auto_return: 'approved',
-        statement_descriptor: 'Allo Financas Pro',
+        back_url: 'https://allofinancas.netlify.app/app?payment=success',
+        status: 'pending',
         notification_url: 'https://finny-bot.onrender.com/webhook-mp'
       })
     });
 
     const data = await response.json();
-    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    console.log('MP preapproval response:', JSON.stringify(data));
+
+    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar assinatura' });
     res.json({ url: data.init_point });
   } catch(e) {
     console.error('MP error:', e);
@@ -128,48 +127,115 @@ app.post('/create-payment', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// MERCADO PAGO — WEBHOOK
+// MERCADO PAGO — CANCELAR ASSINATURA
+// ─────────────────────────────────────────────
+app.post('/cancel-subscription', async (req, res) => {
+  try {
+    const { userId } = req.body;
+    if(!userId) return res.status(400).json({ error: 'userId obrigatório' });
+
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const userDoc = await db.collection('users').doc(userId).get();
+    const userData = userDoc.data() || {};
+    const subscriptionId = userData.proSubscriptionId;
+
+    if(!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+
+    // Cancela no Mercado Pago
+    const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${subscriptionId}`, {
+      method: 'PUT',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+      },
+      body: JSON.stringify({ status: 'cancelled' })
+    });
+
+    const mpData = await mpRes.json();
+    console.log('MP cancel response:', JSON.stringify(mpData));
+
+    if(mpData.status !== 'cancelled'){
+      return res.status(500).json({ error: 'Erro ao cancelar no Mercado Pago' });
+    }
+
+    // Atualiza Firestore — mantém PRO até expirar
+    await db.collection('users').doc(userId).set({
+      proCancelled: true,
+      proCancelledAt: new Date().toISOString()
+    }, { merge: true });
+
+    res.json({ success: true });
+  } catch(e) {
+    console.error('Cancel error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────
+// MERCADO PAGO — WEBHOOK RECORRENTE
 // ─────────────────────────────────────────────
 app.post('/webhook-mp', async (req, res) => {
   try {
-    res.sendStatus(200); // Responde imediatamente para o MP
+    res.sendStatus(200);
 
     const { type, data } = req.body;
-    if(type !== 'payment') return;
+    console.log('Webhook MP:', type, data);
 
-    const paymentId = data?.id;
-    if(!paymentId) return;
-
-    // Busca detalhes do pagamento
-    const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
-      headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-    });
-    const pmt = await pmtRes.json();
-
-    if(pmt.status !== 'approved') return;
-
-    // external_reference = userId|plan
-    const [userId, plan] = (pmt.external_reference || '').split('|');
-    if(!userId) return;
-
-    // Ativa PRO no Firestore
     const { getDb } = require('./config/firebase');
     const db = getDb();
-    const now = new Date();
-    const days = plan === 'yearly' ? 365 : 30;
-    const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 
-    await db.collection('users').doc(userId).set({
-      isPro: true,
-      proSince: now.toISOString(),
-      proPlan: plan || 'monthly',
-      proPaymentId: String(paymentId),
-      proExpiresAt: expiresAt
-    }, { merge: true });
+    // Pagamento aprovado
+    if(type === 'payment'){
+      const paymentId = data?.id;
+      if(!paymentId) return;
 
-    console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
+      const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
+        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      });
+      const pmt = await pmtRes.json();
+      if(pmt.status !== 'approved') return;
 
-    console.log('✅ PRO ativado para:', userId);
+      const [userId, plan] = (pmt.external_reference || '').split('|');
+      if(!userId) return;
+
+      const now = new Date();
+      const days = plan === 'yearly' ? 365 : 30;
+      const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+
+      await db.collection('users').doc(userId).set({
+        isPro: true,
+        proSince: now.toISOString(),
+        proPlan: plan || 'monthly',
+        proPaymentId: String(paymentId),
+        proExpiresAt: expiresAt,
+        proCancelled: false
+      }, { merge: true });
+
+      console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
+    }
+
+    // Assinatura criada/atualizada — salva o ID
+    if(type === 'subscription_preapproval'){
+      const subId = data?.id;
+      if(!subId) return;
+
+      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
+        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      });
+      const sub = await subRes.json();
+
+      const [userId] = (sub.external_reference || '').split('|');
+      if(!userId) return;
+
+      await db.collection('users').doc(userId).set({
+        proSubscriptionId: subId,
+        proSubscriptionStatus: sub.status
+      }, { merge: true });
+
+      console.log('📋 Assinatura salva:', subId, 'status:', sub.status);
+    }
+
   } catch(e) {
     console.error('Webhook MP error:', e);
   }
