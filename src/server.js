@@ -163,8 +163,11 @@ app.post('/create-payment-pix', async (req, res) => {
         statement_descriptor: 'Allo Financas Pro',
         notification_url: 'https://finny-bot.onrender.com/webhook-mp',
         payment_methods: {
-          excluded_payment_types: [{ id: 'credit_card' }]
-        }
+  excluded_payment_types: [
+    { id: 'credit_card' },
+    { id: 'debit_card' }
+  ]
+}
       })
     });
 
