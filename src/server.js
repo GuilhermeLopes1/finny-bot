@@ -109,7 +109,7 @@ const message = await client.messages.create({
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
 // ─────────────────────────────────────────────
-('/create-payment', async (req, res) => {
+app.post('/create-payment', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
@@ -157,7 +157,7 @@ const frequency = plan === 'yearly' ? 12 : 1;
 // ─────────────────────────────────────────────
 // MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
 // ─────────────────────────────────────────────
-('/create-payment-pix', async (req, res) => {
+app.post('/create-payment-pix', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
