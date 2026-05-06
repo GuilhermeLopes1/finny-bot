@@ -69,7 +69,7 @@ app.use('/webhook', rateLimiter);
 // ROUTES
 // ─────────────────────────────────────────────
 const { handleRegisterUser } = require('./controllers/webhookController');
-('/register', handleRegisterUser);
+app.post('/register', handleRegisterUser);
 
 // ─────────────────────────────────────────────
 // PDF IMPORT ROUTE
@@ -77,7 +77,7 @@ const { handleRegisterUser } = require('./controllers/webhookController');
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-('/import-pdf', upload.single('file'), async (req, res) => {
+app.post('/import-pdf', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
@@ -211,7 +211,7 @@ app.post('/create-payment-pix', async (req, res) => {
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
-('/cancel-subscription', async (req, res) => {
+app.post('/cancel-subscription', async (req, res) => {
  
   
   try {
@@ -285,7 +285,7 @@ function verifyMercadoPagoSignature(req) {
 }
 
 // ─────────────────────────────────────────────
-('/webhook-mp', async (req, res) => {
+app.post('/webhook-mp', async (req, res) => {
   try {
 
     // 🔐 valida assinatura
@@ -855,7 +855,7 @@ setInterval(()=>{
 // ─────────────────────────────────────────────
 // ALLOFY — CHAT IA
 // ─────────────────────────────────────────────
-('/allofy-chat', async (req, res) => {
+app.post('/allofy-chat', async (req, res) => {
   try {
     const { system, messages } = req.body;
     if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
