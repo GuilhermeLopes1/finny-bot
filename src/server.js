@@ -18,6 +18,33 @@ const logger = require('./utils/logger');
 const { handleAllofyChat } = require('./controllers/allofyController');
 
 // ─────────────────────────────────────────────
+// META WHATSAPP API — HELPER
+// ─────────────────────────────────────────────
+async function sendWhatsAppMeta(phoneNumber, message){
+  const phone = String(phoneNumber).replace(/\D/g,'');
+  const fullPhone = phone.startsWith('55') ? phone : '55' + phone;
+  
+  const res = await fetch(
+    `https://graph.facebook.com/v20.0/${process.env.META_PHONE_NUMBER_ID}/messages`,
+    {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + process.env.META_ACCESS_TOKEN
+      },
+      body: JSON.stringify({
+        messaging_product: 'whatsapp',
+        to: fullPhone,
+        type: 'text',
+        text: { body: message }
+      })
+    }
+  );
+  const data = await res.json();
+  if(data.error) throw new Error(data.error.message);
+  return data;
+}
+// ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
 
@@ -723,11 +750,7 @@ async function sendWeeklySummaries(){
         +`📋 Transações: ${weekTxs.length}\n\n`
         +`_Acesse o app para mais detalhes: allofinancas.netlify.app/app_`;
 
-      await client.messages.create({
-        from: 'whatsapp:+14155238886',
-        to: `whatsapp:+${data.phoneNumber}`,
-        body: msg
-      });
+      await sendWhatsAppMeta(data.phoneNumber, msg);
     }
     console.log('✅ Resumos semanais enviados');
   } catch(e){
@@ -800,11 +823,7 @@ async function sendDailySummaries(){
       msg += `_Acesse o app: allofinancas.netlify.app/app_`;
 
       try {
-        await client.messages.create({
-          from: 'whatsapp:+14155238886',
-          to: `whatsapp:+${data.phoneNumber}`,
-          body: msg
-        });
+        await sendWhatsAppMeta(data.phoneNumber, msg);
         count++;
       } catch(e){
         console.warn('Erro ao enviar resumo para', data.phoneNumber, e.message);
