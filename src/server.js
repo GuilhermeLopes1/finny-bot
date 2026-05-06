@@ -131,6 +131,8 @@ app.post('/create-payment', async (req, res) => {
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
 app.post('/cancel-subscription', async (req, res) => {
+  console.log('userId recebido:', userId);
+  console.log('doc existe?', userDoc.exists);
   try {
     const { userId } = req.body;
     if(!userId) return res.status(400).json({ error: 'userId obrigatório' });
