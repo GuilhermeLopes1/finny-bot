@@ -140,8 +140,8 @@ app.post('/cancel-subscription', async (req, res) => {
     const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.data() || {};
     const subscriptionId = userData.proSubscriptionId;
-
-    if(!subscriptionId || userData.proSubscriptionStatus !== 'authorized'){
+    console.log('USER DATA CANCEL:', userData);
+   if(!subscriptionId){
   return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
 }
 
