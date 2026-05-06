@@ -742,7 +742,88 @@ setInterval(()=>{
     sendWeeklySummaries();
   }
 }, 60*1000);
+// ─────────────────────────────────────────────
+// FINNYBOT — RESUMO DIÁRIO ÀS 23:59
+// ─────────────────────────────────────────────
+async function sendDailySummaries(){
+  try {
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
 
+    // Busca usuários com telefone cadastrado
+    const snap = await db.collection('users').where('phoneNumber','!=','').get();
+    let count = 0;
+
+    for(const doc of snap.docs){
+      const data = doc.data();
+      if(!data.phoneNumber) continue;
+
+      const txs = data.transactions || [];
+      const today = new Date().toISOString().split('T')[0];
+
+      // Filtra transações de hoje
+      const todayTxs = txs.filter(t => (t.date||'').startsWith(today));
+      const income   = todayTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
+      const expense  = todayTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
+      const balance  = income - expense;
+
+      // Saldo geral nos bancos
+      const banks = data.banks || [];
+      const totalBalance = banks.reduce((s,b)=>s+b.balance,0);
+
+      // Top gasto do dia
+      const topGasto = todayTxs
+        .filter(t=>t.type==='expense')
+        .sort((a,b)=>b.amount-a.amount)[0];
+
+      // Monta mensagem
+      const fmt = v => `R$${Math.abs(v).toFixed(2).replace('.',',')}`;
+      const saldoEmoji = balance >= 0 ? '😊' : '⚠️';
+
+      let msg = `🌙 *Resumo do dia — Allo Finanças*\n\n`;
+
+      if(todayTxs.length === 0){
+        msg += `Você não registrou nenhuma transação hoje.\n\n`;
+        msg += `💡 _Lembre de registrar seus gastos para manter o controle!_\n\n`;
+      } else {
+        msg += `📈 Receitas hoje: ${fmt(income)}\n`;
+        msg += `📉 Despesas hoje: ${fmt(expense)}\n`;
+        msg += `${saldoEmoji} Saldo do dia: ${balance>=0?'+':'−'}${fmt(balance)}\n`;
+        msg += `📋 Transações: ${todayTxs.length}\n\n`;
+
+        if(topGasto){
+          msg += `🏆 Maior gasto: *${topGasto.description||topGasto.desc}* — ${fmt(topGasto.amount)}\n\n`;
+        }
+      }
+
+      msg += `💰 Saldo total nos bancos: *${totalBalance>=0?'+':'−'}${fmt(totalBalance)}*\n\n`;
+      msg += `_Acesse o app: allofinancas.netlify.app/app_`;
+
+      try {
+        await client.messages.create({
+          from: 'whatsapp:+14155238886',
+          to: `whatsapp:+${data.phoneNumber}`,
+          body: msg
+        });
+        count++;
+      } catch(e){
+        console.warn('Erro ao enviar resumo para', data.phoneNumber, e.message);
+      }
+    }
+
+    console.log(`✅ Resumos diários enviados para ${count} usuários`);
+  } catch(e){
+    console.error('sendDailySummaries error:', e);
+  }
+}
+
+// Roda todo minuto e verifica se são 23:59
+setInterval(()=>{
+  const now = new Date();
+  if(now.getHours()===23 && now.getMinutes()===59){
+    sendDailySummaries();
+  }
+}, 60*1000);
 // ─────────────────────────────────────────────
 // ALLOFY — CHAT IA
 // ─────────────────────────────────────────────
