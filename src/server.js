@@ -261,25 +261,38 @@ app.post('/webhook-mp', async (req, res) => {
 
     // Assinatura criada/atualizada
     if(type === 'subscription_preapproval'){
-      const subId = data?.id;
-      if(!subId) return;
 
-      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-      });
-      const sub = await subRes.json();
+  const subId = data?.id;
+  if(!subId) return;
 
-      const [userId, plan] = (sub.external_reference || '').split('|');
-      if(!userId) return;
+  const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
+    headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+  });
 
-      await db.collection('users').doc(userId).set({
-        proSubscriptionId: subId,
-        proSubscriptionStatus: sub.status
-      }, { merge: true });
+  const sub = await subRes.json();
 
-      console.log('📋 Assinatura salva:', subId, 'status:', sub.status);
-    }
-    if(type === 'subscription_authorized_payment'){
+  const [userId, plan] = (sub.external_reference || '').split('|');
+  if(!userId) return;
+
+  await db.collection('users').doc(userId).set({
+    proSubscriptionId: subId,
+    proSubscriptionStatus: sub.status
+  }, { merge: true });
+
+  console.log('📋 Assinatura salva:', subId, 'status:', sub.status);
+
+  // 🔥 CANCELAMENTO
+  if(sub.status === 'cancelled'){
+    await db.collection('users').doc(userId).set({
+      isPro: false,
+      proCancelled: true
+    }, { merge: true });
+
+    console.log('❌ PRO desativado:', userId);
+  }
+}
+
+if(type === 'subscription_authorized_payment'){
   const subId = data?.id;
   if(!subId) return;
 
