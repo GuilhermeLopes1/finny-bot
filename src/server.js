@@ -140,6 +140,12 @@ app.post('/cancel-subscription', async (req, res) => {
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
+
+    const allUsers = await db.collection('users').get();
+
+console.log('🔥 TODOS USERS IDS:');
+allUsers.forEach(doc => console.log(doc.id));
+
     const userDoc = await db.collection('users').doc(userId).get();
     console.log('doc existe?', userDoc.exists);
     const userData = userDoc.data() || {};
