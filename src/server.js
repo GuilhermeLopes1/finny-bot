@@ -136,20 +136,18 @@ app.post('/cancel-subscription', async (req, res) => {
   try {
     const { userId } = req.body;
     if(!userId) return res.status(400).json({ error: 'userId obrigatório' });
-     console.log('userId recebido:', userId);
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
 
     const allUsers = await db.collection('users').get();
 
-console.log('🔥 TODOS USERS IDS:');
 allUsers.forEach(doc => console.log(doc.id));
 
     const userDoc = await db.collection('users').doc(userId).get();
-    console.log('doc existe?', userDoc.exists);
+    
     const userData = userDoc.data() || {};
-    console.log('USER DATA CANCEL:', userData);
+  
     const subscriptionId = userData.proSubscriptionId;
    if(!subscriptionId){
   return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
