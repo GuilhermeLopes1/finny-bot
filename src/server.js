@@ -473,7 +473,16 @@ app.get('/', (req, res) => res.json({ service: 'FinnyBot', status: 'running' }))
  * Twilio webhook verification (GET)
  */
 app.get('/webhook', (req, res) => {
-  res.status(200).send('Webhook endpoint active');
+  const mode      = req.query['hub.mode'];
+  const token     = req.query['hub.verify_token'];
+  const challenge = req.query['hub.challenge'];
+
+  if(mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN){
+    console.log('✅ Webhook Meta verificado!');
+    res.status(200).send(challenge);
+  } else {
+    res.status(403).send('Forbidden');
+  }
 });
 
 /**
