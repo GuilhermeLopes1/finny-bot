@@ -742,6 +742,38 @@ setInterval(()=>{
 }, 60*1000);
 
 // ─────────────────────────────────────────────
+// ALLOFY — CHAT IA
+// ─────────────────────────────────────────────
+app.post('/allofy-chat', async (req, res) => {
+  try {
+    const { system, messages } = req.body;
+    if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
+
+    const response = await fetch('https://api.anthropic.com/v1/messages', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'x-api-key': process.env.ANTHROPIC_API_KEY,
+        'anthropic-version': '2023-06-01'
+      },
+      body: JSON.stringify({
+        model: 'claude-haiku-4-5-20251001',
+        max_tokens: 1024,
+        system: system || 'Você é o Allofy, uma IA financeira pessoal.',
+        messages: messages
+      })
+    });
+
+    const data = await response.json();
+    const reply = data.content?.[0]?.text || 'Não consegui processar sua pergunta.';
+    res.json({ reply });
+  } catch(e) {
+    console.error('Allofy chat error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
+
+// ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 
