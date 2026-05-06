@@ -15,6 +15,7 @@ require('./config/firebase');
 const { handleWebhook, handleHealthCheck } = require('./controllers/webhookController');
 const { rateLimiter } = require('./middleware/rateLimiter');
 const logger = require('./utils/logger');
+const { handleAllofyChat } = require('./controllers/allofyController');
 
 // ─────────────────────────────────────────────
 // INIT
@@ -41,7 +42,7 @@ app.use('/webhook', rateLimiter);
 // ROUTES
 // ─────────────────────────────────────────────
 const { handleRegisterUser } = require('./controllers/webhookController');
-app.post('/register', handleRegisterUser);
+('/register', handleRegisterUser);
 
 // ─────────────────────────────────────────────
 // PDF IMPORT ROUTE
@@ -49,7 +50,7 @@ app.post('/register', handleRegisterUser);
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.post('/import-pdf', upload.single('file'), async (req, res) => {
+('/import-pdf', upload.single('file'), async (req, res) => {
   try {
     if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
 
@@ -81,7 +82,7 @@ const message = await client.messages.create({
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
 // ─────────────────────────────────────────────
-app.post('/create-payment', async (req, res) => {
+('/create-payment', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
@@ -129,7 +130,7 @@ const frequency = plan === 'yearly' ? 12 : 1;
 // ─────────────────────────────────────────────
 // MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
 // ─────────────────────────────────────────────
-app.post('/create-payment-pix', async (req, res) => {
+('/create-payment-pix', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
@@ -183,7 +184,7 @@ app.post('/create-payment-pix', async (req, res) => {
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
-app.post('/cancel-subscription', async (req, res) => {
+('/cancel-subscription', async (req, res) => {
  
   
   try {
@@ -257,7 +258,7 @@ function verifyMercadoPagoSignature(req) {
 }
 
 // ─────────────────────────────────────────────
-app.post('/webhook-mp', async (req, res) => {
+('/webhook-mp', async (req, res) => {
   try {
 
     // 🔐 valida assinatura
@@ -391,7 +392,7 @@ if(type === 'subscription_authorized_payment'){
 // ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
-app.post('/ai-analysis', async (req, res) => {
+('/ai-analysis', async (req, res) => {
   try {
     const { prompt, image, imageType } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Prompt obrigatório' });
@@ -432,13 +433,14 @@ app.post('/ai-analysis', async (req, res) => {
  * Health check
  */
 app.get('/health', handleHealthCheck);
+app.post('/allofy-chat', handleAllofyChat);
 app.get('/', (req, res) => res.json({ service: 'FinnyBot', status: 'running' }));
 
 /**
  * WhatsApp Webhook — Twilio sends POST with form body
  * Z-API sends POST with JSON body
  */
-app.post('/webhook', handleWebhook);
+('/webhook', handleWebhook);
 
 /**
  * Twilio webhook verification (GET)
@@ -744,7 +746,7 @@ setInterval(()=>{
 // ─────────────────────────────────────────────
 // ALLOFY — CHAT IA
 // ─────────────────────────────────────────────
-app.post('/allofy-chat', async (req, res) => {
+('/allofy-chat', async (req, res) => {
   try {
     const { system, messages } = req.body;
     if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
