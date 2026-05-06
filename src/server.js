@@ -131,18 +131,20 @@ app.post('/create-payment', async (req, res) => {
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
 app.post('/cancel-subscription', async (req, res) => {
-  console.log('userId recebido:', userId);
-  console.log('doc existe?', userDoc.exists);
+ 
+  
   try {
     const { userId } = req.body;
     if(!userId) return res.status(400).json({ error: 'userId obrigatório' });
+     console.log('userId recebido:', userId);
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
     const userDoc = await db.collection('users').doc(userId).get();
+    console.log('doc existe?', userDoc.exists);
     const userData = userDoc.data() || {};
-    const subscriptionId = userData.proSubscriptionId;
     console.log('USER DATA CANCEL:', userData);
+    const subscriptionId = userData.proSubscriptionId;
    if(!subscriptionId){
   return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
 }
