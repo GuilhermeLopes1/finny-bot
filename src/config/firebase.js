@@ -1,6 +1,7 @@
 const admin = require('firebase-admin');
 
 const serviceAccount = JSON.parse(process.env.GOOGLE_CREDENTIALS);
+console.log('🔥 PROJECT ID BACK:', serviceAccount.project_id);
 
 // 🔐 Corrige quebra de linha da chave privada
 serviceAccount.private_key = serviceAccount.private_key.replace(/\\n/g, '\n');
