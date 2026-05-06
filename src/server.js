@@ -466,7 +466,80 @@ app.use((err, req, res, next) => {
 app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
+// ─────────────────────────────────────────────
+// ALLO POINTS — APURAÇÃO MENSAL AUTOMÁTICA
+// ─────────────────────────────────────────────
+async function apurarRankingMensal(){
+  try {
+    const now = new Date();
+    // Só roda no dia 1 de cada mês
+    if(now.getDate() !== 1) return;
 
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+
+    // Pega o mês anterior
+    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
+    const monthKey  = prevMonth.getFullYear() + '-' + String(prevMonth.getMonth()+1).padStart(2,'0');
+    const monthLabel = prevMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+
+    console.log('🏆 Apurando ranking de:', monthKey);
+
+    // Busca o líder do mês
+    const rankSnap = await db.collection('ap_ranking').doc(monthKey)
+      .collection('users').orderBy('points', 'desc').limit(1).get();
+
+    if(rankSnap.empty){
+      console.log('Nenhum participante no ranking de', monthKey);
+      return;
+    }
+
+    const winner   = rankSnap.docs[0];
+    const winnerId = winner.id;
+    const winnerData = winner.data();
+    const winnerPts  = winnerData.points || 0;
+    const winnerName = winnerData.name || 'Usuário';
+
+    console.log('🥇 Vencedor:', winnerName, 'com', winnerPts, 'pts');
+
+    // Ativa 1 mês de PRO grátis para o vencedor
+    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
+    await db.collection('users').doc(winnerId).set({
+      isPro: true,
+      proPlan: 'monthly',
+      proSince: now.toISOString(),
+      proExpiresAt: expiresAt,
+      proCancelled: false,
+      proAwardedBy: 'ranking',
+      proAwardMonth: monthKey
+    }, { merge: true });
+
+    // Salva o resultado no Firestore para histórico
+    await db.collection('ap_ranking').doc(monthKey).set({
+      winner: { id: winnerId, name: winnerName, points: winnerPts },
+      apuratedAt: new Date().toISOString(),
+      prize: '1 mês PRO grátis'
+    }, { merge: true });
+
+    // Envia notificação pelo sistema de mensagens do admin
+    await db.collection('admin_messages').add({
+      target: 'all',
+      type: 'success',
+      title: '🏆 Campeão do mês de ' + monthLabel + '!',
+      body: winnerName + ' venceu o ranking com ' + winnerPts.toLocaleString('pt-BR') + ' Allo Points e ganhou 1 mês PRO grátis! Parabéns! 🎉',
+      createdAt: new Date(),
+      createdBy: 'sistema'
+    });
+
+    console.log('✅ PRO ativado para o vencedor:', winnerName);
+  } catch(e){
+    console.error('apurarRankingMensal error:', e);
+  }
+}
+
+// Roda a apuração todo dia (verifica internamente se é dia 1)
+apurarRankingMensal();
+setInterval(apurarRankingMensal, 24 * 60 * 60 * 1000);
 // ─────────────────────────────────────────────
 // JOB DIÁRIO — VERIFICA EXPIRAÇÃO DO PRO
 // ─────────────────────────────────────────────
