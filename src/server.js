@@ -126,6 +126,56 @@ app.post('/create-payment', async (req, res) => {
     res.status(500).json({ error: e.message });
   }
 });
+// ─────────────────────────────────────────────
+// MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
+// ─────────────────────────────────────────────
+app.post('/create-payment-pix', async (req, res) => {
+  try {
+    const { plan, userId, userEmail, userName } = req.body;
+    if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+
+    const prices = { monthly: 9.90, yearly: 89.90 };
+    const labels = { monthly: 'Mensal', yearly: 'Anual' };
+    const price  = prices[plan] || 9.90;
+    const label  = labels[plan] || 'Mensal';
+
+    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+      method: 'POST',
+      headers: {
+        'Content-Type': 'application/json',
+        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+      },
+      body: JSON.stringify({
+        items: [{
+          title: 'Allo Finanças Pro — ' + label,
+          quantity: 1,
+          currency_id: 'BRL',
+          unit_price: price
+        }],
+        payer: { email: userEmail || '', name: userName || '' },
+        external_reference: userId + '|' + plan,
+        back_urls: {
+          success: 'https://allofinancas.netlify.app/app?payment=success',
+          failure: 'https://allofinancas.netlify.app/app?payment=failure',
+          pending: 'https://allofinancas.netlify.app/app?payment=pending'
+        },
+        auto_return: 'approved',
+        statement_descriptor: 'Allo Financas Pro',
+        notification_url: 'https://finny-bot.onrender.com/webhook-mp',
+        payment_methods: {
+          excluded_payment_types: [{ id: 'credit_card' }]
+        }
+      })
+    });
+
+    const data = await response.json();
+    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    res.json({ url: data.init_point });
+  } catch(e) {
+    console.error('MP PIX error:', e);
+    res.status(500).json({ error: e.message });
+  }
+});
 
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CANCELAR ASSINATURA
