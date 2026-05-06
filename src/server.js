@@ -88,10 +88,10 @@ app.post('/create-payment', async (req, res) => {
 
     const prices   = { monthly: 9.90, yearly: 89.90 };
     const labels   = { monthly: 'Mensal', yearly: 'Anual' };
-    const freqs    = { monthly: 'months', yearly: 'years' };
     const price    = prices[plan] || 9.90;
-    const label    = labels[plan] || 'Mensal';
-    const freq     = freqs[plan]  || 'months';
+const label    = labels[plan] || 'Mensal';
+const freq     = 'months';
+const frequency = plan === 'yearly' ? 12 : 1;
 
     const response = await fetch('https://api.mercadopago.com/preapproval', {
       method: 'POST',
@@ -105,8 +105,8 @@ app.post('/create-payment', async (req, res) => {
         external_reference: userId + '|' + plan,
         payer_email: userEmail || '',
         auto_recurring: {
-          frequency: 1,
-          frequency_type: freq,
+  frequency: frequency,
+  frequency_type: freq,
           transaction_amount: price,
           currency_id: 'BRL'
         },
