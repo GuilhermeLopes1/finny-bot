@@ -540,6 +540,114 @@ async function apurarRankingMensal(){
 // Roda a apuração todo dia (verifica internamente se é dia 1)
 apurarRankingMensal();
 setInterval(apurarRankingMensal, 24 * 60 * 60 * 1000);
+
+// ─────────────────────────────────────────────
+// ALLO POINTS — BÔNUS SALDO POSITIVO MENSAL
+// ─────────────────────────────────────────────
+async function bonusSaldoPositivo(){
+  try {
+    const now = new Date();
+
+    // Só roda no último dia do mês
+    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
+    const isLastDay = tomorrow.getMonth() !== now.getMonth();
+    if(!isLastDay) return;
+
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+
+    // Mês atual no formato YYYY-MM
+    const monthKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+
+    console.log('💰 Verificando saldo positivo do mês:', monthKey);
+
+    // Busca todos os usuários
+    const usersSnap = await db.collection('users').get();
+
+    let count = 0;
+    for(const userDoc of usersSnap.docs){
+      try {
+        const userData = userDoc.data();
+        const userId   = userDoc.id;
+
+        // Pega transações do mês atual
+        const txSnap = await db.collection('users').doc(userId)
+          .collection('transactions')
+          .where('date', '>=', monthKey + '-01')
+          .where('date', '<=', monthKey + '-31')
+          .get().catch(() => null);
+
+        // Se não tem subcoleção de transações, tenta pelo campo no documento
+        let receitas = 0;
+        let despesas = 0;
+
+        if(txSnap && !txSnap.empty){
+          txSnap.docs.forEach(d => {
+            const tx = d.data();
+            if(tx.type === 'income') receitas += tx.amount || 0;
+            if(tx.type === 'expense') despesas += tx.amount || 0;
+          });
+        } else {
+          // Transações salvas no documento do usuário (estrutura atual do app)
+          const transactions = userData.transactions || [];
+          transactions.forEach(tx => {
+            if((tx.date || '').startsWith(monthKey)){
+              if(tx.type === 'income') receitas += tx.amount || 0;
+              if(tx.type === 'expense') despesas += tx.amount || 0;
+            }
+          });
+        }
+
+        // Verifica se saldo é positivo
+        if(receitas > 0 && receitas > despesas){
+          // Verifica se já ganhou bônus este mês
+          const jaGanhou = userData['apBonus_' + monthKey];
+          if(jaGanhou) continue;
+
+          // Adiciona +200 pts
+          const currentPts = userData.alloPoints || 0;
+          await db.collection('users').doc(userId).set({
+            alloPoints: currentPts + 200,
+            ['apBonus_' + monthKey]: true
+          }, { merge: true });
+
+          // Histórico
+          await db.collection('users').doc(userId)
+            .collection('ap_history').add({
+              type: 'positive_month',
+              description: 'Mês com saldo positivo! 💰',
+              points: 200,
+              createdAt: new Date()
+            });
+
+          // Ranking do mês
+          const rankRef = db.collection('ap_ranking').doc(monthKey)
+            .collection('users').doc(userId);
+          const rankDoc = await rankRef.get().catch(() => null);
+          const currentRankPts = rankDoc?.exists ? (rankDoc.data()?.points || 0) : 0;
+          await rankRef.set({
+            points: currentRankPts + 200,
+            name: userData.name || 'Usuário',
+            updatedAt: new Date()
+          }, { merge: true });
+
+          count++;
+          console.log('✅ +200 pts para:', userData.name || userId);
+        }
+      } catch(e){
+        console.warn('bonusSaldoPositivo user error:', e);
+      }
+    }
+
+    console.log('💰 Bônus saldo positivo aplicado para', count, 'usuários');
+  } catch(e){
+    console.error('bonusSaldoPositivo error:', e);
+  }
+}
+
+// Roda todo dia (verifica internamente se é último dia do mês)
+bonusSaldoPositivo();
+setInterval(bonusSaldoPositivo, 24 * 60 * 60 * 1000);
 // ─────────────────────────────────────────────
 // JOB DIÁRIO — VERIFICA EXPIRAÇÃO DO PRO
 // ─────────────────────────────────────────────
