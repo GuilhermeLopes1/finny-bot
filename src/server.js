@@ -138,7 +138,7 @@ const frequency = plan === 'yearly' ? 12 : 1;
           transaction_amount: price,
           currency_id: 'BRL'
         },
-        back_url: 'https://allofinancas.netlify.app/app?payment=success',
+        back_url: 'https://allofinancas.com/app?payment=success',
         status: 'pending',
         notification_url: 'https://finny-bot.onrender.com/webhook-mp'
       })
@@ -183,9 +183,9 @@ app.post('/create-payment-pix', async (req, res) => {
         payer: { email: userEmail || '', name: userName || '' },
         external_reference: userId + '|' + plan,
         back_urls: {
-          success: 'https://allofinancas.netlify.app/app?payment=success',
-          failure: 'https://allofinancas.netlify.app/app?payment=failure',
-          pending: 'https://allofinancas.netlify.app/app?payment=pending'
+          success: 'https://allofinancas.com/app?payment=success',
+          failure: 'https://allofinancas.com/app?payment=failure',
+          pending: 'https://allofinancas.com/app?payment=pending'
         },
         auto_return: 'approved',
         statement_descriptor: 'Allo Financas Pro',
@@ -757,7 +757,7 @@ async function sendWeeklySummaries(){
         +`📉 Despesas: R$${expense.toFixed(2).replace('.',',')}\n`
         +`💰 Saldo: ${balance>=0?'+':''}R$${balance.toFixed(2).replace('.',',')}\n`
         +`📋 Transações: ${weekTxs.length}\n\n`
-        +`_Acesse o app para mais detalhes: allofinancas.netlify.app/app_`;
+        +`_Acesse o app para mais detalhes: allofinancas.com/app_`;
 
       await sendWhatsAppMeta(data.phoneNumber, msg);
     }
@@ -829,7 +829,7 @@ async function sendDailySummaries(){
       }
 
       msg += `💰 Saldo total nos bancos: *${totalBalance>=0?'+':'−'}${fmt(totalBalance)}*\n\n`;
-      msg += `_Acesse o app: allofinancas.netlify.app/app_`;
+      msg += `_Acesse o app: allofinancas.com/app_`;
 
       try {
         await sendWhatsAppMeta(data.phoneNumber, msg);
