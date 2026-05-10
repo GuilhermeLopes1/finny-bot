@@ -860,14 +860,6 @@ app.post('/allofy-chat', async (req, res) => {
     const { system, messages, intentType } = req.body;
     if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
 
-    const model = 'claude-haiku-4-5-20251001';
-
-    // Configura headers para streaming
-    res.setHeader('Content-Type', 'text/event-stream');
-    res.setHeader('Cache-Control', 'no-cache');
-    res.setHeader('Connection', 'keep-alive');
-    res.setHeader('Access-Control-Allow-Origin', '*');
-
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
       headers: {
@@ -876,49 +868,25 @@ app.post('/allofy-chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model,
+        model: 'claude-haiku-4-5-20251001',
         max_tokens: 2048,
-        stream: true,
         system: system || 'Você é o Allofy, uma IA financeira pessoal.',
         messages
       })
     });
-     if(!response.ok){
-  const errText = await response.text();
-  console.error('Anthropic error:', errText);
-  res.write(`data: ${JSON.stringify({ error: 'Erro na API' })}\n\n`);
-  res.end();
-  return;
-}
-    const reader = response.body.getReader();
-    const decoder = new TextDecoder();
 
-    while(true){
-      const { done, value } = await reader.read();
-      if(done) break;
-
-      const chunk = decoder.decode(value);
-      const lines = chunk.split('\n').filter(l => l.startsWith('data: '));
-
-      for(const line of lines){
-        const data = line.replace('data: ', '').trim();
-        if(data === '[DONE]') continue;
-        try {
-          const parsed = JSON.parse(data);
-          if(parsed.type === 'content_block_delta' && parsed.delta?.text){
-            res.write(`data: ${JSON.stringify({ token: parsed.delta.text })}\n\n`);
-          }
-        } catch(e){}
-      }
+    if(!response.ok){
+      const err = await response.text();
+      console.error('Anthropic error:', err);
+      return res.status(500).json({ error: 'Erro na API' });
     }
 
-    res.write('data: [DONE]\n\n');
-    res.end();
-
+    const data = await response.json();
+    const reply = data.content?.[0]?.text || 'Não consegui processar sua pergunta.';
+    res.json({ reply });
   } catch(e) {
     console.error('Allofy chat error:', e);
-    res.write(`data: ${JSON.stringify({ error: e.message })}\n\n`);
-    res.end();
+    res.status(500).json({ error: e.message });
   }
 });
 
