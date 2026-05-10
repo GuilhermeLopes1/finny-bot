@@ -93,7 +93,7 @@ app.post('/import-pdf', upload.single('file'), async (req, res) => {
     const ano = new Date().getFullYear();
     const prompt = 'Analise este texto de fatura bancaria brasileira. RETORNE APENAS JSON PURO:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"' + ano + '-MM-DD"}]}\n\nExtraia todos os itens que tenham: data no formato DD/MM + texto descritivo + valor numerico.\nExemplos do que extrair:\n10/04 PAG BOLETO BANCARIO 146,88 -> income\n28/04 CUSTO TRANS EXTERIOR IOF 6,13 -> expense\n27/04 ANUIDADE DIFERENCIADA 33,00 -> expense\n27/04 CREAO AI LIMITED 70,61 -> expense\n\nSe nao encontrar lancamentos com data+descricao+valor, retorne {"transactions":[{"desc":"Lancamento fatura","amount":253.75,"type":"expense","date":"' + ano + '-04-28"}]}\n\nTexto:\n' + text;
 const message = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-opus-4-6',
       max_tokens: 2000,
       messages: [{ role: 'user', content: prompt }]
     });
@@ -445,7 +445,7 @@ app.post('/ai-analysis', async (req, res) => {
     }
 
     const message = await client.messages.create({
-      model: 'claude-haiku-4-5-20251001',
+      model: 'claude-sonnet-4-6',
       max_tokens: 2000,
       messages: [{ role: 'user', content }]
     });
@@ -884,36 +884,7 @@ app.post('/allofy-chat', async (req, res) => {
   }
 });
 
-// ─────────────────────────────────────────────
-// AI ANALYSIS — DASHBOARD
-// ─────────────────────────────────────────────
-app.post('/ai-analysis', async (req, res) => {
-  try {
-    const { prompt } = req.body;
-    if(!prompt) return res.status(400).json({ error: 'Prompt obrigatório' });
 
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
-        messages: [{ role: 'user', content: prompt }]
-      })
-    });
-
-    const data = await response.json();
-    const text = data.content?.[0]?.text || 'Não foi possível gerar análise.';
-    res.json({ text });
-  } catch(e) {
-    console.error('AI analysis error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
