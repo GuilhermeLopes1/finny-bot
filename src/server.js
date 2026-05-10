@@ -857,8 +857,11 @@ setInterval(()=>{
 // ─────────────────────────────────────────────
 app.post('/allofy-chat', async (req, res) => {
   try {
-    const { system, messages } = req.body;
+    const { system, messages, intentType } = req.body;
     if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
+
+    // Modelo mais inteligente para análises complexas
+    const model = intentType === 'simples' ? 'claude-haiku-4-5-20251001' : 'claude-haiku-4-5-20251001';
 
     const response = await fetch('https://api.anthropic.com/v1/messages', {
       method: 'POST',
@@ -868,10 +871,10 @@ app.post('/allofy-chat', async (req, res) => {
         'anthropic-version': '2023-06-01'
       },
       body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 1024,
+        model,
+        max_tokens: 2048,
         system: system || 'Você é o Allofy, uma IA financeira pessoal.',
-        messages: messages
+        messages
       })
     });
 
