@@ -883,7 +883,13 @@ app.post('/allofy-chat', async (req, res) => {
         messages
       })
     });
-
+     if(!response.ok){
+  const errText = await response.text();
+  console.error('Anthropic error:', errText);
+  res.write(`data: ${JSON.stringify({ error: 'Erro na API' })}\n\n`);
+  res.end();
+  return;
+}
     const reader = response.body.getReader();
     const decoder = new TextDecoder();
 
