@@ -419,7 +419,7 @@ if(type === 'subscription_authorized_payment'){
 // ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
-('/ai-analysis', async (req, res) => {
+app.post('/ai-analysis', async (req, res) => {
   try {
     const { prompt, image, imageType } = req.body;
     if (!prompt) return res.status(400).json({ error: 'Prompt obrigatório' });
