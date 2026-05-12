@@ -114,8 +114,8 @@ app.post('/create-payment', async (req, res) => {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
-    const prices   = { monthly: 9.90, yearly: 89.90 };
-    const labels   = { monthly: 'Mensal', yearly: 'Anual' };
+    const prices   = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
+const labels   = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
     const price    = prices[plan] || 9.90;
 const label    = labels[plan] || 'Mensal';
 const freq     = 'months';
@@ -162,8 +162,8 @@ app.post('/create-payment-pix', async (req, res) => {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
-    const prices = { monthly: 9.90, yearly: 89.90 };
-    const labels = { monthly: 'Mensal', yearly: 'Anual' };
+    const prices = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
+const labels = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
     const price  = prices[plan] || 9.90;
     const label  = labels[plan] || 'Mensal';
 
@@ -323,17 +323,21 @@ app.post('/webhook-mp', async (req, res) => {
       if(!userId) return;
 
       const now = new Date();
-      const days = plan === 'yearly' ? 365 : 30;
-      const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+      const isMotorista = plan.startsWith('motorista');
+const days = (plan === 'yearly' || plan === 'motorista-yearly') ? 365 : 30;
+const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 
-      await db.collection('users').doc(userId).set({
-        isPro: true,
-        proSince: now.toISOString(),
-        proPlan: plan || 'monthly',
-        proPaymentId: String(paymentId),
-        proExpiresAt: expiresAt,
-        proCancelled: false
-      }, { merge: true });
+await db.collection('users').doc(userId).set({
+  isPro:        isMotorista ? false : true,
+  isMotorista:  isMotorista ? true  : false,
+  proSince:     now.toISOString(),
+  proPlan:      plan || 'monthly',
+  proSubscriptionId: subId,
+  proSubscriptionStatus: 'authorized',
+  proExpiresAt: isMotorista ? null : expiresAt,
+  motoristaExpiresAt: isMotorista ? expiresAt : null,
+  proCancelled: false
+}, { merge: true });
 
       console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
     }
@@ -395,18 +399,20 @@ if(type === 'subscription_authorized_payment'){
   }
 
   const now = new Date();
-  const days = plan === 'yearly' ? 365 : 30;
-  const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+  const isMotorista = plan.startsWith('motorista');
+const days = (plan === 'yearly' || plan === 'motorista-yearly') ? 365 : 30;
+const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
 
-  await db.collection('users').doc(userId).set({
-    isPro: true,
-    proSince: now.toISOString(),
-    proPlan: plan || 'monthly',
-    proSubscriptionId: subId,
-    proSubscriptionStatus: 'authorized',
-    proExpiresAt: expiresAt,
-    proCancelled: false
-  }, { merge: true });
+await db.collection('users').doc(userId).set({
+  isPro:        isMotorista ? false : true,
+  isMotorista:  isMotorista ? true  : false,
+  proSince:     now.toISOString(),
+  proPlan:      plan || 'monthly',
+  proPaymentId: String(paymentId),
+  proExpiresAt: isMotorista ? null : expiresAt,
+  motoristaExpiresAt: isMotorista ? expiresAt : null,
+  proCancelled: false
+}, { merge: true });
 
   console.log('🔥 PRO ativado via assinatura:', userId);
 }
