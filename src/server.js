@@ -115,6 +115,9 @@ app.post('/create-payment', async (req, res) => {
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
     // Busca preços do Firestore (respeita promoções)
+// Busca preços do Firestore (respeita promoções)
+const { getDb } = require('./config/firebase');
+const db = getDb();
 const pricingDoc = await db.collection('settings').doc('pricing').get();
 const pricing = pricingDoc.exists ? pricingDoc.data() : {};
 const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
@@ -174,7 +177,10 @@ app.post('/create-payment-pix', async (req, res) => {
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
     // Busca preços do Firestore (respeita promoções)
-const pricingDoc2 = await db.collection('settings').doc('pricing').get();
+// Busca preços do Firestore (respeita promoções)
+const { getDb: getDb2 } = require('./config/firebase');
+const db2 = getDb2();
+const pricingDoc2 = await db2.collection('settings').doc('pricing').get();
 const pricing2 = pricingDoc2.exists ? pricingDoc2.data() : {};
 const promoAtiva2 = pricing2.promoExpires && new Date(pricing2.promoExpires) > new Date();
 
