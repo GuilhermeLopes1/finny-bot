@@ -114,9 +114,20 @@ app.post('/create-payment', async (req, res) => {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
-    const prices   = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
-const labels   = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
-    const price    = prices[plan] || 9.90;
+    // Busca preços do Firestore (respeita promoções)
+const pricingDoc = await db.collection('settings').doc('pricing').get();
+const pricing = pricingDoc.exists ? pricingDoc.data() : {};
+const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
+
+const defaultPrices = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
+const prices = {
+  monthly:            promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly || 17.90),
+  yearly:             promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly  || 119.90),
+  'motorista-monthly': pricing.motorista       || 14.90,
+  'motorista-yearly':  pricing.motoristaYearly || 99.90,
+};
+const labels = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
+const price    = prices[plan] || 17.90;
 const label    = labels[plan] || 'Mensal';
 const freq     = 'months';
 const frequency = plan === 'yearly' ? 12 : 1;
@@ -162,10 +173,20 @@ app.post('/create-payment-pix', async (req, res) => {
     const { plan, userId, userEmail, userName } = req.body;
     if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
 
-    const prices = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
+    // Busca preços do Firestore (respeita promoções)
+const pricingDoc2 = await db.collection('settings').doc('pricing').get();
+const pricing2 = pricingDoc2.exists ? pricingDoc2.data() : {};
+const promoAtiva2 = pricing2.promoExpires && new Date(pricing2.promoExpires) > new Date();
+
+const prices = {
+  monthly:            promoAtiva2 && pricing2.promoMonthly ? pricing2.promoMonthly : (pricing2.monthly || 17.90),
+  yearly:             promoAtiva2 && pricing2.promoYearly  ? pricing2.promoYearly  : (pricing2.yearly  || 119.90),
+  'motorista-monthly': pricing2.motorista       || 14.90,
+  'motorista-yearly':  pricing2.motoristaYearly || 99.90,
+};
 const labels = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
-    const price  = prices[plan] || 9.90;
-    const label  = labels[plan] || 'Mensal';
+const price  = prices[plan] || 17.90;
+const label  = labels[plan] || 'Mensal';
 
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST',
