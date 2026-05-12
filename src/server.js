@@ -16,8 +16,8 @@ const morgan = require('morgan');
 // ── VAPID Push Notifications ──
 webpush.setVapidDetails(
   'mailto:contato@allofinancas.com',
-  process.env.VAPID_PUBLIC_KEY  || 'BJmTO-AIgI-vs_Jdc6IOWsfw7V2x50AEugGPAcaAh2-4egc9OmpEFFNcyrb0IpKTwGMmS0ideGN_Q68KsjYxUc',
-  process.env.VAPID_PRIVATE_KEY || ''
+  process.env.VAPID_PUBLIC_KEY  || 'BKms_i38iL6UdBuZESq17VbfBKcIsfPzbZ-4NI6pfU1w4JDo1r3wkRaVfR34sDo0Q8jRiOfORjfH4OCljes4UG4',
+process.env.VAPID_PRIVATE_KEY || 'A-4LJ-hN65C22fUiCAlP7nyPyyHSAOPrqh0TVV3_G-U'
 );
 const cors = require('cors');
 const crypto = require('crypto');
