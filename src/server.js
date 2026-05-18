@@ -117,33 +117,107 @@ const message = await client.messages.create({
 
 // ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
+// SISTEMA DE PLANOS MODULAR — Allo Finanças
+// ─────────────────────────────────────────────
+//
+// 5 PLANOS:
+//   free              → gratuito (sem isPro, sem módulos)
+//   motorista-monthly / motorista-yearly  → gratuito + módulo motorista
+//   empresa-monthly   / empresa-yearly    → gratuito + módulo empresa
+//   pro-monthly       / pro-yearly        → tudo liberado EXCETO motorista e empresa
+//   proplus-monthly   / proplus-yearly    → tudo liberado, acesso total
+//
+// Campos gravados no Firestore:
+//   isPro              → true se plano pro ou pro+
+//   isMotorista        → true se motorista ou pro+
+//   isEmpresa          → true se empresa ou pro+
+//   proPlan            → ID do plano (ex: 'pro-monthly')
+//   proExpiresAt       → expiração geral
+//   motoristaExpiresAt → expiração motorista
+//   empresaExpiresAt   → expiração empresa
+// ─────────────────────────────────────────────
+
+const PLANOS_DEF = {
+  // ── Motorista (gratuito + motorista) ──
+  'motorista-monthly': { isPro:false, isEmpresa:false, isMotorista:true,  dias:30,  label:'Motorista Mensal' },
+  'motorista-yearly':  { isPro:false, isEmpresa:false, isMotorista:true,  dias:365, label:'Motorista Anual'  },
+
+  // ── Empresa (gratuito + empresa) ──
+  'empresa-monthly':   { isPro:false, isEmpresa:true,  isMotorista:false, dias:30,  label:'Empresa Mensal'   },
+  'empresa-yearly':    { isPro:false, isEmpresa:true,  isMotorista:false, dias:365, label:'Empresa Anual'    },
+
+  // ── Pro (tudo EXCETO motorista e empresa) ──
+  'pro-monthly':       { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal'       },
+  'pro-yearly':        { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual'        },
+
+  // ── Pro+ (tudo liberado) ──
+  'proplus-monthly':   { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'      },
+  'proplus-yearly':    { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'       },
+
+  // Retrocompatibilidade com planos antigos
+  'monthly': { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
+  'yearly':  { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual (legado)'  },
+};
+
+// Busca preço do plano no Firestore (respeita promoções)
+async function getPlanPrice(plan, pricing) {
+  const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
+  const defaults = {
+    'motorista-monthly': pricing.motorista        || 9.90,
+    'motorista-yearly':  pricing.motoristaYearly  || 89.90,
+    'empresa-monthly':   pricing.empresa          || 9.90,
+    'empresa-yearly':    pricing.empresaYearly    || 89.90,
+    'pro-monthly':       promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
+    'pro-yearly':        promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
+    'proplus-monthly':   pricing.proPlus          || 29.90,
+    'proplus-yearly':    pricing.proPlusYearly    || 269.90,
+    // legado
+    'monthly':           promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
+    'yearly':            promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
+  };
+  return defaults[plan] || 9.90;
+}
+
+// Monta o objeto Firestore para ativar um plano
+function buildPlanUpdate(plan, subId) {
+  const def = PLANOS_DEF[plan];
+  if (!def) { console.warn('Plano desconhecido:', plan); return null; }
+
+  const now     = new Date();
+  const expires = new Date(now.getTime() + def.dias * 24 * 60 * 60 * 1000).toISOString();
+
+  return {
+    isPro:               def.isPro,
+    isMotorista:         def.isMotorista,
+    isEmpresa:           def.isEmpresa,
+    proPlan:             plan,
+    proSince:            now.toISOString(),
+    proExpiresAt:        def.isPro        ? expires : null,
+    motoristaExpiresAt:  def.isMotorista  ? expires : null,
+    empresaExpiresAt:    def.isEmpresa    ? expires : null,
+    proCancelled:        false,
+    ...(subId && { proSubscriptionId: subId }),
+  };
+}
+
+// ─────────────────────────────────────────────
 // MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
 // ─────────────────────────────────────────────
 app.post('/create-payment', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
-    if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
 
-    // Busca preços do Firestore (respeita promoções)
-// Busca preços do Firestore (respeita promoções)
-const { getDb } = require('./config/firebase');
-const db = getDb();
-const pricingDoc = await db.collection('settings').doc('pricing').get();
-const pricing = pricingDoc.exists ? pricingDoc.data() : {};
-const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const pricingDoc = await db.collection('settings').doc('pricing').get();
+    const pricing = pricingDoc.exists ? pricingDoc.data() : {};
 
-const defaultPrices = { monthly: 17.90, yearly: 119.90, 'motorista-monthly': 14.90, 'motorista-yearly': 99.90 };
-const prices = {
-  monthly:            promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly || 17.90),
-  yearly:             promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly  || 119.90),
-  'motorista-monthly': pricing.motorista       || 14.90,
-  'motorista-yearly':  pricing.motoristaYearly || 99.90,
-};
-const labels = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
-const price    = prices[plan] || 17.90;
-const label    = labels[plan] || 'Mensal';
-const freq     = 'months';
-const frequency = plan === 'yearly' ? 12 : 1;
+    const price = await getPlanPrice(plan, pricing);
+    const def   = PLANOS_DEF[plan];
+    const isYearly   = plan.endsWith('-yearly') || plan === 'yearly';
+    const frequency  = isYearly ? 12 : 1;
 
     const response = await fetch('https://api.mercadopago.com/preapproval', {
       method: 'POST',
@@ -152,57 +226,47 @@ const frequency = plan === 'yearly' ? 12 : 1;
         'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        preapproval_plan_id: null,
-        reason: 'Allo Finanças Pro — ' + label,
+        reason:             'Allo Finanças — ' + def.label,
         external_reference: userId + '|' + plan,
-        payer_email: userEmail || '',
+        payer_email:        userEmail || '',
         auto_recurring: {
-  frequency: frequency,
-  frequency_type: freq,
+          frequency,
+          frequency_type:     'months',
           transaction_amount: price,
-          currency_id: 'BRL'
+          currency_id:        'BRL'
         },
-        back_url: 'https://allofinancas.com/app?payment=success',
-        status: 'pending',
+        back_url:         'https://allofinancas.com/app?payment=success',
+        status:           'pending',
         notification_url: 'https://finny-bot.onrender.com/webhook-mp'
       })
     });
 
     const data = await response.json();
     console.log('MP preapproval response:', JSON.stringify(data));
-
-    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar assinatura' });
-    res.json({ url: data.init_point });
+    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar assinatura' });
+    res.json({ url: data.init_point, plan: def.label, price });
   } catch(e) {
-    console.error('MP error:', e);
+    console.error('MP create-payment error:', e);
     res.status(500).json({ error: e.message });
   }
 });
+
 // ─────────────────────────────────────────────
 // MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
 // ─────────────────────────────────────────────
 app.post('/create-payment-pix', async (req, res) => {
   try {
     const { plan, userId, userEmail, userName } = req.body;
-    if(!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
 
-    // Busca preços do Firestore (respeita promoções)
-// Busca preços do Firestore (respeita promoções)
-const { getDb: getDb2 } = require('./config/firebase');
-const db2 = getDb2();
-const pricingDoc2 = await db2.collection('settings').doc('pricing').get();
-const pricing2 = pricingDoc2.exists ? pricingDoc2.data() : {};
-const promoAtiva2 = pricing2.promoExpires && new Date(pricing2.promoExpires) > new Date();
+    const { getDb: getDb2 } = require('./config/firebase');
+    const db2 = getDb2();
+    const pricingDoc = await db2.collection('settings').doc('pricing').get();
+    const pricing = pricingDoc.exists ? pricingDoc.data() : {};
 
-const prices = {
-  monthly:            promoAtiva2 && pricing2.promoMonthly ? pricing2.promoMonthly : (pricing2.monthly || 17.90),
-  yearly:             promoAtiva2 && pricing2.promoYearly  ? pricing2.promoYearly  : (pricing2.yearly  || 119.90),
-  'motorista-monthly': pricing2.motorista       || 14.90,
-  'motorista-yearly':  pricing2.motoristaYearly || 99.90,
-};
-const labels = { monthly: 'Pro Mensal', yearly: 'Pro Anual', 'motorista-monthly': 'Motorista Mensal', 'motorista-yearly': 'Motorista Anual' };
-const price  = prices[plan] || 17.90;
-const label  = labels[plan] || 'Mensal';
+    const price = await getPlanPrice(plan, pricing);
+    const def   = PLANOS_DEF[plan];
 
     const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
       method: 'POST',
@@ -211,34 +275,29 @@ const label  = labels[plan] || 'Mensal';
         'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        items: [{
-          title: 'Allo Finanças Pro — ' + label,
-          quantity: 1,
-          currency_id: 'BRL',
-          unit_price: price
-        }],
-        payer: { email: userEmail || '', name: userName || '' },
+        items: [{ title: 'Allo Finanças — ' + def.label, quantity: 1, currency_id: 'BRL', unit_price: price }],
+        payer:              { email: userEmail || '', name: userName || '' },
         external_reference: userId + '|' + plan,
         back_urls: {
           success: 'https://allofinancas.com/app?payment=success',
           failure: 'https://allofinancas.com/app?payment=failure',
           pending: 'https://allofinancas.com/app?payment=pending'
         },
-        auto_return: 'approved',
-        statement_descriptor: 'Allo Financas Pro',
-        notification_url: 'https://finny-bot.onrender.com/webhook-mp',
+        auto_return:            'approved',
+        statement_descriptor:   'Allo Financas',
+        notification_url:       'https://finny-bot.onrender.com/webhook-mp',
         payment_methods: {
-  excluded_payment_types: [
-    { id: 'credit_card' },
-    { id: 'debit_card' }
-  ]
-}
+          excluded_payment_types: [
+            { id: 'credit_card' },
+            { id: 'debit_card' }
+          ]
+        }
       })
     });
 
     const data = await response.json();
-    if(!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
-    res.json({ url: data.init_point });
+    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    res.json({ url: data.init_point, plan: def.label, price });
   } catch(e) {
     console.error('MP PIX error:', e);
     res.status(500).json({ error: e.message });
@@ -249,29 +308,19 @@ const label  = labels[plan] || 'Mensal';
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
 app.post('/cancel-subscription', async (req, res) => {
- 
-  
   try {
     const { userId } = req.body;
-    if(!userId) return res.status(400).json({ error: 'userId obrigatório' });
+    if (!userId) return res.status(400).json({ error: 'userId obrigatório' });
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
 
-    const allUsers = await db.collection('users').get();
-
-allUsers.forEach(doc => console.log(doc.id));
-
-    const userDoc = await db.collection('users').doc(userId).get();
-    
+    const userDoc  = await db.collection('users').doc(userId).get();
     const userData = userDoc.data() || {};
-  
     const subscriptionId = userData.proSubscriptionId;
-   if(!subscriptionId){
-  return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
-}
 
-    // Cancela no Mercado Pago
+    if (!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+
     const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${subscriptionId}`, {
       method: 'PUT',
       headers: {
@@ -284,14 +333,13 @@ allUsers.forEach(doc => console.log(doc.id));
     const mpData = await mpRes.json();
     console.log('MP cancel response:', JSON.stringify(mpData));
 
-    if(mpData.status !== 'cancelled'){
-      return res.status(500).json({ error: 'Erro ao cancelar no Mercado Pago' });
-    }
+    if (mpData.status !== 'cancelled') return res.status(500).json({ error: 'Erro ao cancelar no Mercado Pago' });
 
-    // Atualiza Firestore — mantém PRO até expirar
+    // Mantém Pro até expirar naturalmente — só marca como cancelado
     await db.collection('users').doc(userId).set({
-      proCancelled: true,
-      proCancelledAt: new Date().toISOString()
+      proCancelled:   true,
+      proCancelledAt: new Date().toISOString(),
+      proSubscriptionStatus: 'cancelled',
     }, { merge: true });
 
     res.json({ success: true });
@@ -301,158 +349,109 @@ allUsers.forEach(doc => console.log(doc.id));
   }
 });
 
+// ─────────────────────────────────────────────
+// MERCADO PAGO — WEBHOOK
+// ─────────────────────────────────────────────
 function verifyMercadoPagoSignature(req) {
   const signature = req.headers['x-signature'];
-  const secret = process.env.MP_WEBHOOK_SECRET;
-
+  const secret    = process.env.MP_WEBHOOK_SECRET;
   if (!signature || !secret) return false;
-
-  const parts = signature.split(',');
-  const hashPart = parts.find(p => p.startsWith('v1='));
-  if (!hashPart) return false;
-
-  const receivedHash = hashPart.replace('v1=', '');
-
-  const generatedHash = crypto
-    .createHmac('sha256', secret)
-    .update(JSON.stringify(req.body))
-    .digest('hex');
-
-  return generatedHash === receivedHash;
+  const hashPart = (signature.split(',').find(p => p.startsWith('v1=')) || '').replace('v1=', '');
+  const generated = crypto.createHmac('sha256', secret).update(JSON.stringify(req.body)).digest('hex');
+  return generated === hashPart;
 }
 
-// ─────────────────────────────────────────────
 app.post('/webhook-mp', async (req, res) => {
+  // Responde imediatamente para o MP não retentar
+  res.sendStatus(200);
+
   try {
-
-    // 🔐 valida assinatura
     const { type, data } = req.body;
-  if(!type || !data){
-  console.warn('Webhook inválido (sem dados)');
-  return res.sendStatus(400);
-}
-// ⚠️ TEMPORÁRIO — desativar validação
-// Mercado Pago webhook signature é complexa
-// vamos validar depois corretamente
+    if (!type || !data) { console.warn('Webhook inválido (sem dados)'); return; }
 
-    // responde rápido pro Mercado Pago
-    res.sendStatus(200);
-    
     console.log('Webhook MP:', type, data);
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
 
-    // Pagamento aprovado
-    if(type === 'payment'){
+    // ── PAGAMENTO ÚNICO (PIX/Boleto) ──
+    if (type === 'payment') {
       const paymentId = data?.id;
-      if(!paymentId) return;
+      if (!paymentId) return;
 
       const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
         headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
       });
       const pmt = await pmtRes.json();
-      console.log('STATUS PAGAMENTO:', pmt.status);
-      console.log('PAYMENT COMPLETO:', pmt);
-      if(pmt.status !== 'approved') return;
+      console.log('STATUS PAGAMENTO:', pmt.status, '| PLANO:', pmt.external_reference);
+
+      if (pmt.status !== 'approved') return;
 
       const [userId, plan] = (pmt.external_reference || '').split('|');
-      if(!userId) return;
+      if (!userId || !plan) return;
 
-      const now = new Date();
-      const isMotorista = plan.startsWith('motorista');
-const days = (plan === 'yearly' || plan === 'motorista-yearly') ? 365 : 30;
-const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
+      const update = buildPlanUpdate(plan, null);
+      if (!update) return;
 
-await db.collection('users').doc(userId).set({
-  isPro:        isMotorista ? false : true,
-  isMotorista:  isMotorista ? true  : false,
-  proSince:     now.toISOString(),
-  proPlan:      plan || 'monthly',
-  proSubscriptionId: subId,
-  proSubscriptionStatus: 'authorized',
-  proExpiresAt: isMotorista ? null : expiresAt,
-  motoristaExpiresAt: isMotorista ? expiresAt : null,
-  proCancelled: false
-}, { merge: true });
-
-      console.log('✅ PRO ativado para:', userId, 'expira em:', expiresAt);
+      update.proPaymentId = String(paymentId);
+      await db.collection('users').doc(userId).set(update, { merge: true });
+      console.log('✅ Plano ativado (pagamento):', plan, '→', userId);
     }
 
-    // Assinatura criada/atualizada
-    if(type === 'subscription_preapproval'){
+    // ── ASSINATURA CRIADA / ATUALIZADA ──
+    if (type === 'subscription_preapproval') {
+      const subId = data?.id;
+      if (!subId) return;
 
-  const subId = data?.id;
-  if(!subId) return;
+      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
+        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      });
+      const sub = await subRes.json();
 
-  const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-    headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-  });
+      const [userId, plan] = (sub.external_reference || '').split('|');
+      if (!userId) return;
 
-  const sub = await subRes.json();
+      // Salva ID e status da assinatura
+      await db.collection('users').doc(userId).set({
+        proSubscriptionId:     subId,
+        proSubscriptionStatus: sub.status,
+      }, { merge: true });
 
-  const [userId, plan] = (sub.external_reference || '').split('|');
-  if(!userId) return;
+      console.log('📋 Assinatura salva:', subId, '| status:', sub.status);
 
-  await db.collection('users').doc(userId).set({
-    proSubscriptionId: subId,
-    proSubscriptionStatus: sub.status
-  }, { merge: true });
+      // Cancelamento
+      if (sub.status === 'cancelled') {
+        await db.collection('users').doc(userId).set({
+          isPro:                 false,
+          isMotorista:           false,
+          isEmpresa:             false,
+          proCancelled:          true,
+          proCancelledAt:        new Date().toISOString(),
+          proSubscriptionStatus: 'cancelled',
+        }, { merge: true });
+        console.log('❌ Plano cancelado:', userId);
+      }
+    }
 
-  console.log('📋 Assinatura salva:', subId, 'status:', sub.status);
+    // ── COBRANÇA RECORRENTE APROVADA ──
+    if (type === 'subscription_authorized_payment') {
+      const subId = data?.id;
+      if (!subId) return;
 
-  // 🔥 CANCELAMENTO
-  if(sub.status === 'cancelled'){
-    await db.collection('users').doc(userId).set({
-      isPro: false,
-      proCancelled: true
-    }, { merge: true });
+      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
+        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      });
+      const sub = await subRes.json();
 
-    console.log('❌ PRO desativado:', userId);
-  }
-}
+      const [userId, plan] = (sub.external_reference || '').split('|');
+      if (!userId || !plan) return;
 
-if(type === 'subscription_authorized_payment'){
-  const subId = data?.id;
-  if(!subId) return;
+      const update = buildPlanUpdate(plan, subId);
+      if (!update) return;
 
-  const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-    headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-  });
-
-  const sub = await subRes.json();
-
-  const [userId, plan] = (sub.external_reference || '').split('|');
-  if(!userId) return;
-
-   // 🔐 EVITA DUPLICAR PRO
-  const userRef = db.collection('users').doc(userId);
-  const userSnap = await userRef.get();
-  const userData = userSnap.data() || {};
-
-  if(userData.isPro){
-    console.log('⚠️ Usuário já é PRO:', userId);
-    return;
-  }
-
-  const now = new Date();
-  const isMotorista = plan.startsWith('motorista');
-const days = (plan === 'yearly' || plan === 'motorista-yearly') ? 365 : 30;
-const expiresAt = new Date(now.getTime() + days * 24 * 60 * 60 * 1000).toISOString();
-
-await db.collection('users').doc(userId).set({
-  isPro:        isMotorista ? false : true,
-  isMotorista:  isMotorista ? true  : false,
-  proSince:     now.toISOString(),
-  proPlan:      plan || 'monthly',
-  proPaymentId: String(paymentId),
-  proExpiresAt: isMotorista ? null : expiresAt,
-  motoristaExpiresAt: isMotorista ? expiresAt : null,
-  proCancelled: false
-}, { merge: true });
-
-  console.log('🔥 PRO ativado via assinatura:', userId);
-}
+      await db.collection('users').doc(userId).set(update, { merge: true });
+      console.log('🔥 Renovação via assinatura:', plan, '→', userId);
+    }
 
   } catch(e) {
     console.error('Webhook MP error:', e);
