@@ -146,13 +146,21 @@ const PLANOS_DEF = {
   'empresa-monthly':   { isPro:false, isEmpresa:true,  isMotorista:false, dias:30,  label:'Empresa Mensal'   },
   'empresa-yearly':    { isPro:false, isEmpresa:true,  isMotorista:false, dias:365, label:'Empresa Anual'    },
 
-  // ── Pro (tudo EXCETO motorista e empresa) ──
-  'pro-monthly':       { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal'       },
-  'pro-yearly':        { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual'        },
+// ── Pro (tudo EXCETO motorista e empresa) ──
+  'pro-monthly':             { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal'              },
+  'pro-yearly':              { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual'               },
+
+  // ── Pro Motorista (Pro + Motorista) ──
+  'pro-motorista-monthly':   { isPro:true,  isEmpresa:false, isMotorista:true,  dias:30,  label:'Pro Motorista Mensal'    },
+  'pro-motorista-yearly':    { isPro:true,  isEmpresa:false, isMotorista:true,  dias:365, label:'Pro Motorista Anual'     },
+
+  // ── Pro Empresa (Pro + Empresa) ──
+  'pro-empresa-monthly':     { isPro:true,  isEmpresa:true,  isMotorista:false, dias:30,  label:'Pro Empresa Mensal'      },
+  'pro-empresa-yearly':      { isPro:true,  isEmpresa:true,  isMotorista:false, dias:365, label:'Pro Empresa Anual'       },
 
   // ── Pro+ (tudo liberado) ──
-  'proplus-monthly':   { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'      },
-  'proplus-yearly':    { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'       },
+  'proplus-monthly':         { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'             },
+  'proplus-yearly':          { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'              },
 
   // Retrocompatibilidade com planos antigos
   'monthly': { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
@@ -167,10 +175,14 @@ async function getPlanPrice(plan, pricing) {
     'motorista-yearly':  pricing.motoristaYearly  || 89.90,
     'empresa-monthly':   pricing.empresa          || 9.90,
     'empresa-yearly':    pricing.empresaYearly    || 89.90,
-    'pro-monthly':       promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
-    'pro-yearly':        promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
-    'proplus-monthly':   pricing.proPlus          || 29.90,
-    'proplus-yearly':    pricing.proPlusYearly    || 269.90,
+    'pro-monthly':             promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
+    'pro-yearly':              promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
+    'pro-motorista-monthly':   pricing.proMotorista       || 24.90,
+    'pro-motorista-yearly':    pricing.proMotoristaYearly || 229.90,
+    'pro-empresa-monthly':     pricing.proEmpresa         || 24.90,
+    'pro-empresa-yearly':      pricing.proEmpresaYearly   || 229.90,
+    'proplus-monthly':         pricing.proPlus            || 29.90,
+    'proplus-yearly':          pricing.proPlusYearly      || 269.90,
     // legado
     'monthly':           promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
     'yearly':            promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
