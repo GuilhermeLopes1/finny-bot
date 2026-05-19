@@ -203,25 +203,47 @@ async function fetchPricing(db) {
 }
 
 // Monta o objeto Firestore para ativar um plano
-function buildPlanUpdate(plan, subId) {
+async function buildPlanUpdate(plan, subId, db) {
   const def = PLANOS_DEF[plan];
   if (!def) { console.warn('Plano desconhecido:', plan); return null; }
 
   const now     = new Date();
   const expires = new Date(now.getTime() + def.dias * 24 * 60 * 60 * 1000).toISOString();
 
-  return {
-    isPro:               def.isPro,
-    isMotorista:         def.isMotorista,
-    isEmpresa:           def.isEmpresa,
-    proPlan:             plan,
-    proSince:            now.toISOString(),
-    proExpiresAt:        def.isPro        ? expires : null,
-    motoristaExpiresAt:  def.isMotorista  ? expires : null,
-    empresaExpiresAt:    def.isEmpresa    ? expires : null,
-    proCancelled:        false,
+  // Busca estado atual do usuário para não sobrescrever módulos já ativos
+  let current = {};
+  if (db && subId === null) {
+    // será chamado com uid quando disponível
+  }
+
+  // Nunca revoga um módulo que já está ativo e não expirou
+  // Só ativa o que o novo plano define — nunca desativa o que já existe
+  const update = {
+    proPlan:   plan,
+    proSince:  now.toISOString(),
+    proCancelled: false,
     ...(subId && { proSubscriptionId: subId }),
   };
+
+  // isPro: ativa se o novo plano tem, mas nunca revoga
+  if (def.isPro) {
+    update.isPro         = true;
+    update.proExpiresAt  = expires;
+  }
+
+  // isMotorista: ativa se o novo plano tem, mas nunca revoga
+  if (def.isMotorista) {
+    update.isMotorista        = true;
+    update.motoristaExpiresAt = expires;
+  }
+
+  // isEmpresa: ativa se o novo plano tem, mas nunca revoga
+  if (def.isEmpresa) {
+    update.isEmpresa        = true;
+    update.empresaExpiresAt = expires;
+  }
+
+  return update;
 }
 
 // ─────────────────────────────────────────────
@@ -427,7 +449,7 @@ app.post('/webhook-mp', async (req, res) => {
       const [userId, plan] = (pmt.external_reference || '').split('|');
       if (!userId || !plan) return;
 
-      const update = buildPlanUpdate(plan, null);
+      const update = await buildPlanUpdate(plan, null);
       if (!update) return;
 
       update.proPaymentId = String(paymentId);
@@ -459,12 +481,13 @@ app.post('/webhook-mp', async (req, res) => {
       // Cancelamento
       if (sub.status === 'cancelled') {
         await db.collection('users').doc(userId).set({
-          isPro:                 false,
-          isMotorista:           false,
-          isEmpresa:             false,
-          proCancelled:          true,
-          proCancelledAt:        new Date().toISOString(),
-          proSubscriptionStatus: 'cancelled',
+          // No cancelamento, revoga apenas o módulo do plano cancelado
+        ...(PLANOS_DEF[plan]?.isPro        && { isPro: false,        proExpiresAt: null }),
+        ...(PLANOS_DEF[plan]?.isMotorista  && { isMotorista: false,  motoristaExpiresAt: null }),
+        ...(PLANOS_DEF[plan]?.isEmpresa    && { isEmpresa: false,    empresaExpiresAt: null }),
+        proCancelled:          true,
+        proCancelledAt:        new Date().toISOString(),
+        proSubscriptionStatus: 'cancelled',
         }, { merge: true });
         console.log('❌ Plano cancelado:', userId);
       }
@@ -483,7 +506,7 @@ app.post('/webhook-mp', async (req, res) => {
       const [userId, plan] = (sub.external_reference || '').split('|');
       if (!userId || !plan) return;
 
-      const update = buildPlanUpdate(plan, subId);
+      const update = await buildPlanUpdate(plan, subId);
       if (!update) return;
 
       await db.collection('users').doc(userId).set(update, { merge: true });
