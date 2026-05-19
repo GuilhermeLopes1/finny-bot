@@ -171,23 +171,28 @@ const PLANOS_DEF = {
 async function getPlanPrice(plan, pricing) {
   const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
   const defaults = {
-    'motorista-monthly': pricing.motorista        || 9.90,
-    'motorista-yearly':  pricing.motoristaYearly  || 89.90,
-    'empresa-monthly':   pricing.empresa          || 9.90,
-    'empresa-yearly':    pricing.empresaYearly    || 89.90,
+    'motorista-monthly':       pricing.motorista              || 9.90,
+    'motorista-yearly':        pricing.motoristaYearly        || 89.90,
+    'empresa-monthly':         pricing.empresa                || 9.90,
+    'empresa-yearly':          pricing.empresaYearly          || 89.90,
     'pro-monthly':             promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
     'pro-yearly':              promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
-    'pro-motorista-monthly':   pricing.proMotorista       || 24.90,
-    'pro-motorista-yearly':    pricing.proMotoristaYearly || 229.90,
-    'pro-empresa-monthly':     pricing.proEmpresa         || 24.90,
-    'pro-empresa-yearly':      pricing.proEmpresaYearly   || 229.90,
-    'proplus-monthly':         pricing.proPlus            || 29.90,
-    'proplus-yearly':          pricing.proPlusYearly      || 269.90,
-    // legado
-    'monthly':           promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
-    'yearly':            promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
+    'pro-motorista-monthly':   pricing.proMotorista           || 24.90,
+    'pro-motorista-yearly':    pricing.proMotoristaYearly     || 229.90,
+    'pro-empresa-monthly':     pricing.proEmpresa             || 24.90,
+    'pro-empresa-yearly':      pricing.proEmpresaYearly       || 229.90,
+    'proplus-monthly':         pricing.proPlus                || 29.90,
+    'proplus-yearly':          pricing.proPlusYearly          || 269.90,
+    'monthly':                 promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
+    'yearly':                  promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
   };
-  return defaults[plan] || 9.90;
+  return defaults[plan] ?? 9.90;
+}
+
+// Sempre busca do servidor (nunca cache) — garante preço atualizado
+async function fetchPricing(db) {
+  const doc = await db.collection('settings').doc('pricing').get({ source: 'server' });
+  return doc.exists ? doc.data() : {};
 }
 
 // Monta o objeto Firestore para ativar um plano
@@ -223,8 +228,7 @@ app.post('/create-payment', async (req, res) => {
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
-    const pricingDoc = await db.collection('settings').doc('pricing').get();
-    const pricing = pricingDoc.exists ? pricingDoc.data() : {};
+    const pricing = await fetchPricing(db);
 
     const price = await getPlanPrice(plan, pricing);
     const def   = PLANOS_DEF[plan];
@@ -274,8 +278,7 @@ app.post('/create-payment-pix', async (req, res) => {
 
     const { getDb: getDb2 } = require('./config/firebase');
     const db2 = getDb2();
-    const pricingDoc = await db2.collection('settings').doc('pricing').get();
-    const pricing = pricingDoc.exists ? pricingDoc.data() : {};
+    const pricing = await fetchPricing(db2);
 
     const price = await getPlanPrice(plan, pricing);
     const def   = PLANOS_DEF[plan];
