@@ -191,6 +191,18 @@ async function getPlanPrice(plan, pricing) {
 }
 
 // Monta o objeto Firestore para ativar um plano
+// Busca pricing sempre fresco do Firestore
+async function fetchPricing(db) {
+  try {
+    const doc = await db.collection('settings').doc('pricing').get();
+    return doc.exists ? doc.data() : {};
+  } catch(e) {
+    console.warn('fetchPricing error:', e.message);
+    return {};
+  }
+}
+
+// Monta o objeto Firestore para ativar um plano
 function buildPlanUpdate(plan, subId) {
   const def = PLANOS_DEF[plan];
   if (!def) { console.warn('Plano desconhecido:', plan); return null; }
@@ -211,6 +223,21 @@ function buildPlanUpdate(plan, subId) {
     ...(subId && { proSubscriptionId: subId }),
   };
 }
+
+// ─────────────────────────────────────────────
+// ─────────────────────────────────────────────
+// ROTA PÚBLICA — PREÇOS (usada pelo planos.html)
+// ─────────────────────────────────────────────
+app.get('/pricing', async (req, res) => {
+  res.header('Access-Control-Allow-Origin', '*');
+  try {
+    const { getDb } = require('./config/firebase');
+    const pricing = await fetchPricing(getDb());
+    res.json(pricing);
+  } catch(e) {
+    res.json({});
+  }
+});
 
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
