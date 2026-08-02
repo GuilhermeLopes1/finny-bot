@@ -1,7 +1,7 @@
 {
   "name": "allo-financas-api",
-  "version": "2.0.0",
-  "description": "API do Allo Finanças para pagamentos, IA, importação e notificações",
+  "version": "3.0.0",
+  "description": "API do Allo Finanças para pagamentos, IA, importação, notificações e administração protegida",
   "main": "src/server.js",
   "scripts": {
     "start": "node src/server.js",

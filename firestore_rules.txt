@@ -34,7 +34,8 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     match /admin_logs/{document} {
-      allow read, write: if isAdmin();
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
     }
 
     match /support/{userId} {
