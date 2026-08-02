@@ -546,6 +546,131 @@ app.post('/apply-referral', async (req, res) => {
     res.status(e.status || 500).json({ error:e.message || 'Erro ao aplicar indicação' });
   }
 });
+
+// ─────────────────────────────────────────────
+// ADMIN API — Firebase Auth e auditoria protegida
+// ─────────────────────────────────────────────
+async function requireAdminRequest(req, res, next) {
+  try {
+    const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
+    if(!token) return res.status(401).json({error:'Autenticação necessária'});
+    const {getDb,admin}=require('./config/firebase');
+    const decoded=await admin.auth().verifyIdToken(token,true);
+    const userDoc=await getDb().collection('users').doc(decoded.uid).get();
+    const profile=userDoc.data()||{};
+    if(profile.role!=='admin'&&decoded.admin!==true) return res.status(403).json({error:'Acesso administrativo negado'});
+    req.adminIdentity={uid:decoded.uid,email:decoded.email||profile.email||'',profile};
+    next();
+  } catch(e) {
+    logger.warn('Admin auth denied:',e.message);
+    res.status(401).json({error:'Sessão administrativa inválida ou expirada'});
+  }
+}
+
+async function writeAdminAudit(req,action,targetUid,outcome='success',details={}){
+  try{
+    const {getDb,admin}=require('./config/firebase');
+    const now=new Date().toISOString();
+    await getDb().collection('admin_logs').add({
+      action,targetUid,outcome,details,
+      adminUid:req.adminIdentity?.uid||null,
+      admin:req.adminIdentity?.email||null,
+      msg:`${action} · ${targetUid||'sistema'} · ${outcome}`,
+      tipo:outcome==='success'?'green':'red',
+      ts:now,
+      createdAt:admin.firestore.FieldValue.serverTimestamp(),
+    });
+  }catch(e){logger.warn('Admin audit write failed:',e.message)}
+}
+
+function serializeAuthUser(user){
+  return {
+    uid:user.uid,email:user.email||null,displayName:user.displayName||null,
+    phoneNumber:user.phoneNumber||null,photoURL:user.photoURL||null,
+    emailVerified:user.emailVerified===true,disabled:user.disabled===true,
+    creationTime:user.metadata?.creationTime||null,
+    lastSignInTime:user.metadata?.lastSignInTime||null,
+    lastRefreshTime:user.metadata?.lastRefreshTime||null,
+    providers:(user.providerData||[]).map(p=>p.providerId).filter(Boolean),
+    customClaims:user.customClaims||{},
+  };
+}
+
+app.get('/admin/health',requireAdminRequest,async(req,res)=>{
+  const {admin}=require('./config/firebase');
+  res.json({ok:true,service:'Allo Admin API',projectId:admin.app().options.projectId||null,time:new Date().toISOString()});
+});
+
+app.get('/admin/users',requireAdminRequest,async(req,res)=>{
+  try{
+    const {admin}=require('./config/firebase');
+    const users=[];let pageToken;
+    do{
+      const page=await admin.auth().listUsers(1000,pageToken);
+      users.push(...page.users.map(serializeAuthUser));
+      pageToken=page.pageToken;
+    }while(pageToken&&users.length<10000);
+    await writeAdminAudit(req,'users.list',null,'success',{count:users.length});
+    res.json({ok:true,count:users.length,users});
+  }catch(e){await writeAdminAudit(req,'users.list',null,'error',{message:e.message});res.status(500).json({error:'Não foi possível listar os usuários'})}
+});
+
+app.get('/admin/users/:uid',requireAdminRequest,async(req,res)=>{
+  try{
+    const {admin}=require('./config/firebase');
+    const user=await admin.auth().getUser(req.params.uid);
+    res.json({ok:true,user:serializeAuthUser(user)});
+  }catch(e){res.status(e.code==='auth/user-not-found'?404:500).json({error:'Usuário não encontrado'})}
+});
+
+app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
+  const uid=String(req.params.uid||'');
+  const action=String(req.body?.action||'');
+  const {getDb,admin}=require('./config/firebase');
+  const db=getDb();
+  try{
+    if(!uid) return res.status(400).json({error:'UID obrigatório'});
+    const targetDoc=await db.collection('users').doc(uid).get();
+    const target=targetDoc.data()||{};
+    const destructive=['set-disabled','delete-account'];
+    if(uid===req.adminIdentity.uid&&destructive.includes(action)) return res.status(400).json({error:'Esta ação não pode ser executada na própria conta administrativa'});
+    if(target.role==='admin'&&destructive.includes(action)) return res.status(403).json({error:'Contas administrativas exigem um procedimento de segurança separado'});
+
+    if(action==='set-disabled'){
+      const disabled=req.body?.disabled===true;
+      await admin.auth().updateUser(uid,{disabled});
+      await db.collection('users').doc(uid).set({banned:disabled,updatedAt:new Date().toISOString()},{merge:true});
+    }else if(action==='revoke-sessions'){
+      await admin.auth().revokeRefreshTokens(uid);
+    }else if(action==='set-email-verified'){
+      await admin.auth().updateUser(uid,{emailVerified:req.body?.emailVerified===true});
+    }else if(action==='update-profile'){
+      const update={};
+      if(typeof req.body?.displayName==='string'&&req.body.displayName.trim()) update.displayName=req.body.displayName.trim().slice(0,100);
+      if(typeof req.body?.email==='string'&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email)) update.email=req.body.email.trim().toLowerCase();
+      if(!Object.keys(update).length) return res.status(400).json({error:'Nenhum dado válido para atualizar'});
+      const changed=await admin.auth().updateUser(uid,update);
+      await db.collection('users').doc(uid).set({...(update.displayName&&{name:update.displayName}),...(update.email&&{email:update.email}),updatedAt:new Date().toISOString()},{merge:true});
+      await writeAdminAudit(req,action,uid,'success',{fields:Object.keys(update)});
+      return res.json({ok:true,user:serializeAuthUser(changed)});
+    }else if(action==='delete-account'){
+      await admin.auth().deleteUser(uid);
+      if(req.body?.deleteData===true){
+        const ref=db.collection('users').doc(uid);
+        if(typeof db.recursiveDelete==='function') await db.recursiveDelete(ref); else await ref.delete();
+      }
+    }else{
+      return res.status(400).json({error:'Ação administrativa inválida'});
+    }
+    await writeAdminAudit(req,action,uid,'success',{disabled:req.body?.disabled,deleteData:req.body?.deleteData});
+    res.json({ok:true,action,uid});
+  }catch(e){
+    logger.error('Admin user action failed:',e);
+    await writeAdminAudit(req,action,uid,'error',{message:e.message});
+    const status=e.code==='auth/user-not-found'?404:e.code==='auth/email-already-exists'?409:500;
+    res.status(status).json({error:e.code==='auth/email-already-exists'?'Este e-mail já pertence a outra conta':'A ação administrativa não pôde ser concluída'});
+  }
+});
 /**
  * Health check
  */
