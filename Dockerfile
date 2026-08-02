@@ -14,8 +14,8 @@ COPY src/ ./src/
 RUN mkdir -p logs
 
 # Non-root user for security
-RUN addgroup -g 1001 -S finny && adduser -S finny -u 1001
-USER finny
+RUN addgroup -g 1001 -S allo && adduser -S allo -u 1001
+USER allo
 
 EXPOSE 3000
 
