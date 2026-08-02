@@ -1,6 +1,5 @@
 /**
- * FinnyBot — AI-Powered WhatsApp Financial Assistant
- * Server entry point
+ * Allo API — pagamentos, IA, importação e notificações
  */
 
 require('dotenv').config();
@@ -14,46 +13,18 @@ const express = require('express');
 const morgan = require('morgan');
 
 // ── VAPID Push Notifications ──
-webpush.setVapidDetails(
-  'mailto:contato@allofinancas.com',
-  process.env.VAPID_PUBLIC_KEY  || 'BKms_i38iL6UdBuZESq17VbfBKcIsfPzbZ-4NI6pfU1w4JDo1r3wkRaVfR34sDo0Q8jRiOfORjfH4OCljes4UG4',
-process.env.VAPID_PRIVATE_KEY || 'A-4LJ-hN65C22fUiCAlP7nyPyyHSAOPrqh0TVV3_G-U'
-);
+if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails('mailto:contato@allofinancas.com', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+} else {
+  console.warn('VAPID não configurado: notificações push ficarão desativadas.');
+}
 const cors = require('cors');
 const crypto = require('crypto');
 require('./config/firebase');
-const { handleWebhook, handleHealthCheck } = require('./controllers/webhookController');
-const { rateLimiter } = require('./middleware/rateLimiter');
+const { handleHealthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
 const { handleAllofyChat } = require('./controllers/allofyController');
 
-// ─────────────────────────────────────────────
-// META WHATSAPP API — HELPER
-// ─────────────────────────────────────────────
-async function sendWhatsAppMeta(phoneNumber, message){
-  const phone = String(phoneNumber).replace(/\D/g,'');
-  const fullPhone = phone.startsWith('55') ? phone : '55' + phone;
-  
-  const res = await fetch(
-    `https://graph.facebook.com/v20.0/${process.env.META_PHONE_NUMBER_ID}/messages`,
-    {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.META_ACCESS_TOKEN
-      },
-      body: JSON.stringify({
-        messaging_product: 'whatsapp',
-        to: fullPhone,
-        type: 'text',
-        text: { body: message }
-      })
-    }
-  );
-  const data = await res.json();
-  if(data.error) throw new Error(data.error.message);
-  return data;
-}
 // ─────────────────────────────────────────────
 // INIT
 // ─────────────────────────────────────────────
@@ -72,14 +43,9 @@ app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
 
-// Rate limiting on webhook
-app.use('/webhook', rateLimiter);
-
 // ─────────────────────────────────────────────
 // ROUTES
 // ─────────────────────────────────────────────
-const { handleRegisterUser } = require('./controllers/webhookController');
-app.post('/register', handleRegisterUser);
 
 // ─────────────────────────────────────────────
 // PDF IMPORT ROUTE
@@ -120,51 +86,40 @@ const message = await client.messages.create({
 // SISTEMA DE PLANOS MODULAR — Allo Finanças
 // ─────────────────────────────────────────────
 //
-// 5 PLANOS:
+// PLANOS:
 //   free              → gratuito (sem isPro, sem módulos)
 //   motorista-monthly / motorista-yearly  → gratuito + módulo motorista
-//   empresa-monthly   / empresa-yearly    → gratuito + módulo empresa
-//   pro-monthly       / pro-yearly        → tudo liberado EXCETO motorista e empresa
-//   proplus-monthly   / proplus-yearly    → tudo liberado, acesso total
+//   pro-monthly       / pro-yearly        → financeiro pessoal completo
+//   proplus-monthly   / proplus-yearly    → Pro + Motorista
 //
 // Campos gravados no Firestore:
 //   isPro              → true se plano pro ou pro+
 //   isMotorista        → true se motorista ou pro+
-//   isEmpresa          → true se empresa ou pro+
 //   proPlan            → ID do plano (ex: 'pro-monthly')
 //   proExpiresAt       → expiração geral
 //   motoristaExpiresAt → expiração motorista
-//   empresaExpiresAt   → expiração empresa
 // ─────────────────────────────────────────────
 
 const PLANOS_DEF = {
   // ── Motorista (gratuito + motorista) ──
-  'motorista-monthly': { isPro:false, isEmpresa:false, isMotorista:true,  dias:30,  label:'Motorista Mensal' },
-  'motorista-yearly':  { isPro:false, isEmpresa:false, isMotorista:true,  dias:365, label:'Motorista Anual'  },
+  'motorista-monthly': { isPro:false, isMotorista:true,  dias:30,  label:'Motorista Mensal' },
+  'motorista-yearly':  { isPro:false, isMotorista:true,  dias:365, label:'Motorista Anual'  },
 
-  // ── Empresa (gratuito + empresa) ──
-  'empresa-monthly':   { isPro:false, isEmpresa:true,  isMotorista:false, dias:30,  label:'Empresa Mensal'   },
-  'empresa-yearly':    { isPro:false, isEmpresa:true,  isMotorista:false, dias:365, label:'Empresa Anual'    },
-
-// ── Pro (tudo EXCETO motorista e empresa) ──
-  'pro-monthly':             { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal'              },
-  'pro-yearly':              { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual'               },
+// ── Pro (financeiro pessoal completo) ──
+  'pro-monthly':             { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal'              },
+  'pro-yearly':              { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual'               },
 
   // ── Pro Motorista (Pro + Motorista) ──
-  'pro-motorista-monthly':   { isPro:true,  isEmpresa:false, isMotorista:true,  dias:30,  label:'Pro Motorista Mensal'    },
-  'pro-motorista-yearly':    { isPro:true,  isEmpresa:false, isMotorista:true,  dias:365, label:'Pro Motorista Anual'     },
-
-  // ── Pro Empresa (Pro + Empresa) ──
-  'pro-empresa-monthly':     { isPro:true,  isEmpresa:true,  isMotorista:false, dias:30,  label:'Pro Empresa Mensal'      },
-  'pro-empresa-yearly':      { isPro:true,  isEmpresa:true,  isMotorista:false, dias:365, label:'Pro Empresa Anual'       },
+  'pro-motorista-monthly':   { isPro:true,  isMotorista:true,  dias:30,  label:'Pro Motorista Mensal'    },
+  'pro-motorista-yearly':    { isPro:true,  isMotorista:true,  dias:365, label:'Pro Motorista Anual'     },
 
   // ── Pro+ (tudo liberado) ──
-  'proplus-monthly':         { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'             },
-  'proplus-yearly':          { isPro:true,  isEmpresa:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'              },
+  'proplus-monthly':         { isPro:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'             },
+  'proplus-yearly':          { isPro:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'              },
 
   // Retrocompatibilidade com planos antigos
-  'monthly': { isPro:true,  isEmpresa:false, isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
-  'yearly':  { isPro:true,  isEmpresa:false, isMotorista:false, dias:365, label:'Pro Anual (legado)'  },
+  'monthly': { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
+  'yearly':  { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual (legado)'  },
 };
 
 // Busca preço do plano no Firestore (respeita promoções)
@@ -173,14 +128,10 @@ async function getPlanPrice(plan, pricing) {
   const defaults = {
     'motorista-monthly': pricing.motorista        || 9.90,
     'motorista-yearly':  pricing.motoristaYearly  || 89.90,
-    'empresa-monthly':   pricing.empresa          || 9.90,
-    'empresa-yearly':    pricing.empresaYearly    || 89.90,
     'pro-monthly':             promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
     'pro-yearly':              promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
     'pro-motorista-monthly':   pricing.proMotorista       || 24.90,
     'pro-motorista-yearly':    pricing.proMotoristaYearly || 229.90,
-    'pro-empresa-monthly':     pricing.proEmpresa         || 24.90,
-    'pro-empresa-yearly':      pricing.proEmpresaYearly   || 229.90,
     'proplus-monthly':         pricing.proPlus            || 29.90,
     'proplus-yearly':          pricing.proPlusYearly      || 269.90,
     // legado
@@ -235,12 +186,6 @@ async function buildPlanUpdate(plan, subId, db) {
   if (def.isMotorista) {
     update.isMotorista        = true;
     update.motoristaExpiresAt = expires;
-  }
-
-  // isEmpresa: ativa se o novo plano tem, mas nunca revoga
-  if (def.isEmpresa) {
-    update.isEmpresa        = true;
-    update.empresaExpiresAt = expires;
   }
 
   return update;
@@ -484,7 +429,6 @@ app.post('/webhook-mp', async (req, res) => {
           // No cancelamento, revoga apenas o módulo do plano cancelado
         ...(PLANOS_DEF[plan]?.isPro        && { isPro: false,        proExpiresAt: null }),
         ...(PLANOS_DEF[plan]?.isMotorista  && { isMotorista: false,  motoristaExpiresAt: null }),
-        ...(PLANOS_DEF[plan]?.isEmpresa    && { isEmpresa: false,    empresaExpiresAt: null }),
         proCancelled:          true,
         proCancelledAt:        new Date().toISOString(),
         proSubscriptionStatus: 'cancelled',
@@ -558,41 +502,56 @@ app.post('/ai-analysis', async (req, res) => {
     res.status(500).json({ error: e.message || 'Erro ao consultar IA' });
   }
 });
+
+// Indicação processada no servidor para impedir concessão de plano pelo cliente.
+app.post('/apply-referral', async (req, res) => {
+  try {
+    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
+    const code = String(req.body?.code || '').trim().toUpperCase();
+    if (!token) return res.status(401).json({ error: 'Autenticação necessária' });
+    if (!/^ALLO-[A-Z0-9-]+$/.test(code)) return res.status(400).json({ error: 'Código inválido' });
+
+    const { getDb, admin } = require('./config/firebase');
+    const decoded = await admin.auth().verifyIdToken(token);
+    const db = getDb();
+    const userRef = db.collection('users').doc(decoded.uid);
+    const referralRef = db.collection('referrals').doc(code);
+
+    const result = await db.runTransaction(async tx => {
+      const [userSnap, referralSnap] = await Promise.all([tx.get(userRef), tx.get(referralRef)]);
+      if (!referralSnap.exists) throw Object.assign(new Error('Código não encontrado'), { status: 404 });
+      const referrerId = referralSnap.data().userId;
+      if (!referrerId || referrerId === decoded.uid) throw Object.assign(new Error('Código não permitido'), { status: 400 });
+      const userData = userSnap.data() || {};
+      if (userData.referralProcessed) throw Object.assign(new Error('Código já utilizado'), { status: 409 });
+
+      const referrerRef = db.collection('users').doc(referrerId);
+      const referrerSnap = await tx.get(referrerRef);
+      if (!referrerSnap.exists) throw Object.assign(new Error('Indicador não encontrado'), { status: 404 });
+      const now = new Date();
+      const trialExpires = new Date(now.getTime() + 7*86400000).toISOString();
+      const referrerData = referrerSnap.data() || {};
+      const currentExpiry = new Date(referrerData.proExpiresAt || 0);
+      const base = currentExpiry > now ? currentExpiry : now;
+      const referrerExpires = new Date(base.getTime() + 30*86400000).toISOString();
+
+      tx.set(userRef, { isPro:true, proPlan:'trial', proSince:now.toISOString(), proExpiresAt:trialExpires, referralProcessed:true, referredBy:referrerId }, { merge:true });
+      tx.set(referrerRef, { isPro:true, proPlan:referrerData.proPlan || 'referral', proExpiresAt:referrerExpires, referralCount:(referrerData.referralCount || 0)+1 }, { merge:true });
+      tx.set(db.collection('admin_messages').doc(), { target:'user', userId:referrerId, type:'success', title:'🎉 Sua indicação deu frutos!', body:'Um amigo usou seu código. Você ganhou mais 1 mês de Pro.', createdAt:admin.firestore.FieldValue.serverTimestamp(), createdBy:'sistema' });
+      return { referrerId, trialExpires };
+    });
+    res.json({ ok:true, ...result });
+  } catch (e) {
+    logger.warn('apply-referral:', e.message);
+    res.status(e.status || 500).json({ error:e.message || 'Erro ao aplicar indicação' });
+  }
+});
 /**
  * Health check
  */
 app.get('/health', handleHealthCheck);
 app.post('/allofy-chat', handleAllofyChat);
-app.get('/', (req, res) => res.json({ service: 'FinnyBot', status: 'running' }));
-
-/**
- * WhatsApp Webhook — Twilio sends POST with form body
- * Z-API sends POST with JSON body
- */
-('/webhook', handleWebhook);
-
-/**
- * Twilio webhook verification (GET)
- */
-app.get('/webhook', (req, res) => {
-  const mode      = req.query['hub.mode'];
-  const token     = req.query['hub.verify_token'];
-  const challenge = req.query['hub.challenge'];
-
-  if(mode === 'subscribe' && token === process.env.WEBHOOK_VERIFY_TOKEN){
-    console.log('✅ Webhook Meta verificado!');
-    res.status(200).send(challenge);
-  } else {
-    res.status(403).send('Forbidden');
-  }
-});
-
-/**
- * Z-API webhook verification (GET)
- */
-app.get('/webhook/status', (req, res) => {
-  res.json({ status: 'active', provider: process.env.WHATSAPP_PROVIDER });
-});
+app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }));
 
 // ─────────────────────────────────────────────
 // ERROR HANDLING
@@ -833,173 +792,11 @@ checkProExpirations();
 setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 
 // ─────────────────────────────────────────────
-// RESUMO SEMANAL — TODO DOMINGO ÀS 9H
-// ─────────────────────────────────────────────
-async function sendWeeklySummaries(){
-  try {
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-    const snap = await db.collection('users').where('phoneNumber','!=','').get();
-
-    for(const doc of snap.docs){
-      const data = doc.data();
-      if(!data.phoneNumber) continue;
-
-      const txs = data.transactions || [];
-      const now = new Date();
-      const weekAgo = new Date(now.getTime() - 7*24*60*60*1000);
-
-      const weekTxs = txs.filter(t=> new Date(t.date) >= weekAgo);
-      const income = weekTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-      const expense = weekTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
-      const balance = income - expense;
-
-      const msg = `📊 *Resumo da semana — Allo Finanças*\n\n`
-        +`📈 Receitas: R$${income.toFixed(2).replace('.',',')}\n`
-        +`📉 Despesas: R$${expense.toFixed(2).replace('.',',')}\n`
-        +`💰 Saldo: ${balance>=0?'+':''}R$${balance.toFixed(2).replace('.',',')}\n`
-        +`📋 Transações: ${weekTxs.length}\n\n`
-        +`_Acesse o app para mais detalhes: allofinancas.com/app_`;
-
-      await sendWhatsAppMeta(data.phoneNumber, msg);
-    }
-    console.log('✅ Resumos semanais enviados');
-  } catch(e){
-    console.error('sendWeeklySummaries error:', e);
-  }
-}
-
-// Verifica todo dia se é domingo e 9h
-setInterval(()=>{
-  const now = new Date();
-  if(now.getDay()===0 && now.getHours()===9 && now.getMinutes()<2){
-    sendWeeklySummaries();
-  }
-}, 60*1000);
-// ─────────────────────────────────────────────
-// FINNYBOT — RESUMO DIÁRIO ÀS 23:59
-// ─────────────────────────────────────────────
-async function sendDailySummaries(){
-  try {
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-
-    // Busca usuários com telefone cadastrado
-    const snap = await db.collection('users').where('phoneNumber','!=','').get();
-    let count = 0;
-
-    for(const doc of snap.docs){
-      const data = doc.data();
-      if(!data.phoneNumber) continue;
-
-      const txs = data.transactions || [];
-      const today = new Date().toISOString().split('T')[0];
-
-      // Filtra transações de hoje
-      const todayTxs = txs.filter(t => (t.date||'').startsWith(today));
-      const income   = todayTxs.filter(t=>t.type==='income').reduce((s,t)=>s+t.amount,0);
-      const expense  = todayTxs.filter(t=>t.type==='expense').reduce((s,t)=>s+t.amount,0);
-      const balance  = income - expense;
-
-      // Saldo geral nos bancos
-      const banks = data.banks || [];
-      const totalBalance = banks.reduce((s,b)=>s+b.balance,0);
-
-      // Top gasto do dia
-      const topGasto = todayTxs
-        .filter(t=>t.type==='expense')
-        .sort((a,b)=>b.amount-a.amount)[0];
-
-      // Monta mensagem
-      const fmt = v => `R$${Math.abs(v).toFixed(2).replace('.',',')}`;
-      const saldoEmoji = balance >= 0 ? '😊' : '⚠️';
-
-      let msg = `🌙 *Resumo do dia — Allo Finanças*\n\n`;
-
-      if(todayTxs.length === 0){
-        msg += `Você não registrou nenhuma transação hoje.\n\n`;
-        msg += `💡 _Lembre de registrar seus gastos para manter o controle!_\n\n`;
-      } else {
-        msg += `📈 Receitas hoje: ${fmt(income)}\n`;
-        msg += `📉 Despesas hoje: ${fmt(expense)}\n`;
-        msg += `${saldoEmoji} Saldo do dia: ${balance>=0?'+':'−'}${fmt(balance)}\n`;
-        msg += `📋 Transações: ${todayTxs.length}\n\n`;
-
-        if(topGasto){
-          msg += `🏆 Maior gasto: *${topGasto.description||topGasto.desc}* — ${fmt(topGasto.amount)}\n\n`;
-        }
-      }
-
-      msg += `💰 Saldo total nos bancos: *${totalBalance>=0?'+':'−'}${fmt(totalBalance)}*\n\n`;
-      msg += `_Acesse o app: allofinancas.com/app_`;
-
-      try {
-        await sendWhatsAppMeta(data.phoneNumber, msg);
-        count++;
-      } catch(e){
-        console.warn('Erro ao enviar resumo para', data.phoneNumber, e.message);
-      }
-    }
-
-    console.log(`✅ Resumos diários enviados para ${count} usuários`);
-  } catch(e){
-    console.error('sendDailySummaries error:', e);
-  }
-}
-
-// Roda todo minuto e verifica se são 23:59
-setInterval(()=>{
-  const now = new Date();
-  if(now.getHours()===23 && now.getMinutes()===59){
-    sendDailySummaries();
-  }
-}, 60*1000);
-// ─────────────────────────────────────────────
-// ALLOFY — CHAT IA
-// ─────────────────────────────────────────────
-app.post('/allofy-chat', async (req, res) => {
-  try {
-    const { system, messages, intentType } = req.body;
-    if(!messages || !messages.length) return res.status(400).json({ error: 'Mensagens inválidas' });
-
-    const response = await fetch('https://api.anthropic.com/v1/messages', {
-      method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'x-api-key': process.env.ANTHROPIC_API_KEY,
-        'anthropic-version': '2023-06-01'
-      },
-      body: JSON.stringify({
-        model: 'claude-haiku-4-5-20251001',
-        max_tokens: 2048,
-        system: system || 'Você é o Allofy, uma IA financeira pessoal.',
-        messages
-      })
-    });
-
-    if(!response.ok){
-      const err = await response.text();
-      console.error('Anthropic error:', err);
-      return res.status(500).json({ error: 'Erro na API' });
-    }
-
-    const data = await response.json();
-    const reply = data.content?.[0]?.text || 'Não consegui processar sua pergunta.';
-    res.json({ reply });
-  } catch(e) {
-    console.error('Allofy chat error:', e);
-    res.status(500).json({ error: e.message });
-  }
-});
-
-
-// ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 
 app.listen(PORT, () => {
-  logger.info(`🚀 FinnyBot running on port ${PORT}`);
-  logger.info(`📱 Provider: ${process.env.WHATSAPP_PROVIDER || 'twilio'}`);
+  logger.info(`🚀 Allo API running on port ${PORT}`);
   logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
 });
 
