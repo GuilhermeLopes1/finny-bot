@@ -27,6 +27,7 @@ const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require('./co
 const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiController');
 const { requireFirebaseUser } = require('./middleware/firebaseAuth');
 const { aiRateLimiter } = require('./middleware/aiRateLimiter');
+const { runNotificationCycle, sendPushToProfile } = require('./services/notificationService');
 
 // ─────────────────────────────────────────────
 // INIT
@@ -67,6 +68,7 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const requireAiUser = requireFirebaseUser({ requirePro: true });
+const requireSignedInUser = requireFirebaseUser();
 app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
 
 // ─────────────────────────────────────────────
@@ -870,6 +872,64 @@ async function checkProExpirations(){
 checkProExpirations();
 setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 
+// ═══════════════════════════════════════════════════
+// NOTIFICAÇÕES PERSONALIZADAS
+// ═══════════════════════════════════════════════════
+
+app.post('/notifications/test', requireSignedInUser, async (req, res) => {
+  try {
+    const profile = req.userData || {};
+    if (!profile.pushSubscription || profile.pushEnabled === false) {
+      return res.status(409).json({
+        error: 'Ative as notificações no aplicativo antes de enviar o teste.',
+        code: 'push_not_enabled',
+      });
+    }
+
+    const sent = await sendPushToProfile(req.userIdentity.uid, profile, {
+      title: '🔔 Notificações ativadas!',
+      body: 'Tudo certo. O Allo Finanças já pode enviar seus resumos e alertas personalizados.',
+      tag: 'notification-test',
+      url: '/app?action=open-profile&via=notification',
+    });
+
+    if (!sent) return res.status(409).json({ error: 'Não foi possível usar a inscrição de notificações deste aparelho.' });
+    res.json({ ok: true });
+  } catch (error) {
+    logger.warn(`Teste de push falhou: ${error.message}`);
+    res.status(500).json({ error: 'Não foi possível enviar a notificação de teste.' });
+  }
+});
+
+async function executeNotificationCycle(source = 'internal') {
+  const result = await runNotificationCycle(new Date());
+  logger.info(`🔔 Ciclo de notificações (${source}): ${result.sent} enviada(s), ${result.failures} falha(s), ${result.users} usuário(s).`);
+  return result;
+}
+
+app.post('/notifications/run', async (req, res) => {
+  const expected = String(process.env.CRON_SECRET || '').trim();
+  const supplied = String(req.get('x-cron-secret') || '').trim();
+  if (!expected) return res.status(503).json({ error: 'CRON_SECRET não configurado.' });
+  const authorized = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  if (!authorized) return res.status(401).json({ error: 'Acesso não autorizado.' });
+
+  try {
+    res.json({ ok: true, ...(await executeNotificationCycle('external')) });
+  } catch (error) {
+    logger.error(`Ciclo externo de notificações falhou: ${error.message}`);
+    res.status(500).json({ error: 'Falha ao executar notificações.' });
+  }
+});
+
+// Funciona enquanto o serviço está ativo. A rota /notifications/run permite
+// que um Cron Job externo acorde o serviço e execute o mesmo ciclo.
+cron.schedule('*/15 * * * *', () => {
+  executeNotificationCycle('internal').catch(error => {
+    logger.error(`Cron interno de notificações falhou: ${error.message}`);
+  });
+});
+
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
@@ -877,6 +937,7 @@ setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 app.listen(PORT, () => {
   logger.info(`🚀 Allo API running on port ${PORT}`);
   logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
+  logger.info('🔔 Agendador de notificações ativo (a cada 15 minutos).');
 });
 
 // Graceful shutdown
@@ -885,121 +946,8 @@ process.on('SIGTERM', () => {
   process.exit(0);
 });
 
-process.on('unhandledRejection', (reason, promise) => {
+process.on('unhandledRejection', (reason) => {
   logger.error('Unhandled Rejection:', reason);
 });
-
-// ═══════════════════════════════════════════════════
-// PUSH NOTIFICATIONS
-// ═══════════════════════════════════════════════════
-
-async function sendPushToUser(userId, title, body, data = {}) {
-  try {
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-    const userDoc = await db.collection('users').doc(userId).get();
-    if (!userDoc.exists) return;
-
-    const userData = userDoc.data();
-    if (!userData.pushSubscription || !userData.pushEnabled) return;
-
-    const subscription = JSON.parse(userData.pushSubscription);
-    await webpush.sendNotification(subscription, JSON.stringify({
-      title, body,
-      icon:  '/favicon.png',
-      badge: '/favicon.png',
-      tag:   data.tag || 'allofinancas',
-      data
-    }));
-    console.log(`✅ Push enviado → ${userId}: ${title}`);
-  } catch(e) {
-    if (e.statusCode === 410) {
-      const { getDb } = require('./config/firebase');
-      const db = getDb();
-      await db.collection('users').doc(userId).set(
-        { pushSubscription: null, pushEnabled: false }, { merge: true }
-      );
-    }
-    console.warn(`Push error → ${userId}:`, e.message);
-  }
-}
-
-// ── Cron: todo dia às 08:00 horário de Brasília ──
-cron.schedule('0 11 * * *', async () => {
-  console.log('🔔 Cron push iniciado...');
-  try {
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-
-    const usersSnap = await db.collection('users').where('pushEnabled', '==', true).get();
-
-    const hoje     = new Date();
-    const hojeISO  = hoje.toISOString().split('T')[0];
-    const daqui3   = new Date(); daqui3.setDate(hoje.getDate() + 3);
-    const daqui3ISO = daqui3.toISOString().split('T')[0];
-    const ym       = hojeISO.slice(0, 7);
-    let enviados   = 0;
-
-    for (const doc of usersSnap.docs) {
-      const user   = doc.data();
-      const userId = doc.id;
-      const transactions = user.transactions || [];
-      const cards  = user.cards || [];
-
-      // 1. Contas fixas vencendo em até 3 dias
-      const contasVencendo = transactions.filter(t =>
-        t.recurrence === 'fixed' &&
-        t.type === 'expense' &&
-        (t.status || 'paid') === 'pending' &&
-        t.date >= hojeISO &&
-        t.date <= daqui3ISO
-      );
-      for (const conta of contasVencendo) {
-        await sendPushToUser(userId,
-          '⚠️ Conta vencendo em breve!',
-          `${conta.description || 'Conta'} — R$ ${(conta.amount||0).toFixed(2).replace('.',',')} vence em ${conta.date}`,
-          { tag: 'bill-due-'+conta.id, url: '/app' }
-        );
-        enviados++;
-      }
-
-      // 2. Faturas de cartão vencendo em até 7 dias
-      for (const card of cards) {
-        if (!card.due || !(card.currentInvoice > 0)) continue;
-        const dueDay  = parseInt(card.due);
-        const dueDate = new Date(hoje.getFullYear(), hoje.getMonth(), dueDay);
-        if (dueDate < hoje) dueDate.setMonth(dueDate.getMonth() + 1);
-        const diff = Math.ceil((dueDate - hoje) / (1000*60*60*24));
-        if (diff <= 7 && diff >= 0) {
-          const total = (card.currentInvoice||0) + (card.debtBalance||0);
-          await sendPushToUser(userId,
-            `💳 Fatura ${card.name} vence em ${diff === 0 ? 'hoje' : diff + ' dia(s)'}!`,
-            `Total: R$ ${total.toFixed(2).replace('.',',')}`,
-            { tag: 'card-due-'+card.id, url: '/app' }
-          );
-          enviados++;
-        }
-      }
-
-      // 3. Resumo semanal — toda segunda-feira
-      if (hoje.getDay() === 1) {
-        const txMes   = transactions.filter(t => (t.date||'').startsWith(ym));
-        const rec     = txMes.filter(t => t.type === 'income').reduce((s,t)=>s+t.amount, 0);
-        const desp    = txMes.filter(t => t.type === 'expense').reduce((s,t)=>s+t.amount, 0);
-        if (rec > 0 || desp > 0) {
-          await sendPushToUser(userId,
-            '📊 Resumo semanal',
-            `Receitas: R$${rec.toFixed(2).replace('.',',')} · Despesas: R$${desp.toFixed(2).replace('.',',')} · Saldo: R$${(rec-desp).toFixed(2).replace('.',',')}`,
-            { tag: 'weekly-summary', url: '/app' }
-          );
-          enviados++;
-        }
-      }
-    }
-    console.log(`✅ Cron push finalizado — ${enviados} notificações enviadas.`);
-  } catch(e) {
-    console.error('Cron push error:', e);
-  }
-}, { timezone: 'America/Sao_Paulo' });
 
 module.exports = app;
