@@ -1,0 +1,63 @@
+rules_version = '2';
+service cloud.firestore {
+  match /databases/{database}/documents {
+    function signedIn() { return request.auth != null; }
+    function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
+    function isAdmin() {
+      return signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
+    }
+    function protectedUserFields() {
+      return ['role','isAdmin','banned','isPro','isMotorista','proPlan','proSince','proExpiresAt','motoristaExpiresAt','proCancelled','proSubscriptionId','referralProcessed','referredBy','referralCount'];
+    }
+
+    match /users/{userId} {
+      allow read: if isOwner(userId) || isAdmin();
+      allow create: if isOwner(userId) && !request.resource.data.keys().hasAny(protectedUserFields());
+      allow update: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedUserFields()));
+      allow delete: if isAdmin();
+
+      match /{document=**} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /settings/{document} {
+      allow read: if true;
+      allow write: if isAdmin();
+    }
+    match /coupons/{document} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /admin_messages/{document} {
+      allow read: if signedIn();
+      allow write: if isAdmin();
+    }
+    match /admin_logs/{document} {
+      allow read, create: if isAdmin();
+      allow update, delete: if false;
+    }
+
+    match /support/{userId} {
+      allow read, write: if isOwner(userId) || isAdmin();
+      match /messages/{messageId} {
+        allow read, write: if isOwner(userId) || isAdmin();
+      }
+    }
+
+    match /referrals/{code} {
+      allow read: if signedIn();
+      allow create, update: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow delete: if isAdmin();
+    }
+
+    match /ap_ranking/{month}/users/{userId} {
+      allow read: if signedIn();
+      allow write: if isOwner(userId) || isAdmin();
+    }
+
+    match /{document=**} {
+      allow read, write: if false;
+    }
+  }
+}
