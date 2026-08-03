@@ -27,7 +27,7 @@ const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require('./co
 const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiController');
 const { requireFirebaseUser } = require('./middleware/firebaseAuth');
 const { aiRateLimiter } = require('./middleware/aiRateLimiter');
-const { runNotificationCycle, sendPushToProfile } = require('./services/notificationService');
+const { runNotificationCycle, sendPushToProfile, hasNotificationTarget } = require('./services/notificationService');
 
 // ─────────────────────────────────────────────
 // INIT
@@ -638,10 +638,135 @@ app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }))
 // NOTIFICAÇÕES PERSONALIZADAS
 // ═══════════════════════════════════════════════════
 
+
+function validNativeInstallId(value) {
+  return /^[0-9a-f]{8}-[0-9a-f]{4}-[1-5][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-f]{12}$/i
+    .test(String(value || '').trim());
+}
+
+function validFcmToken(value) {
+  const token = String(value || '').trim();
+  return token.length >= 50 && token.length <= 4096 && !/\s/.test(token);
+}
+
+function nativeDeviceDocumentId(installId) {
+  return crypto.createHash('sha256').update(String(installId)).digest('hex').slice(0, 48);
+}
+
+async function saveDeviceOnUser(userId, installId, device) {
+  const { getDb } = require('./config/firebase');
+  const db = getDb();
+  const userRef = db.collection('users').doc(userId);
+  const snap = await userRef.get();
+  const current = snap.data() || {};
+  const fcmDevices = current.fcmDevices && typeof current.fcmDevices === 'object' && !Array.isArray(current.fcmDevices)
+    ? { ...current.fcmDevices }
+    : {};
+  fcmDevices[installId] = {
+    token: device.token,
+    platform: 'android',
+    appVersion: String(device.appVersion || ''),
+    updatedAt: new Date().toISOString(),
+  };
+  await userRef.set({
+    fcmDevices,
+    fcmUpdatedAt: new Date().toISOString(),
+  }, { merge: true });
+}
+
+async function removeDeviceFromUser(userId, installId) {
+  if (!userId) return;
+  const { getDb } = require('./config/firebase');
+  const db = getDb();
+  const userRef = db.collection('users').doc(userId);
+  const snap = await userRef.get();
+  if (!snap.exists) return;
+  const current = snap.data() || {};
+  const fcmDevices = current.fcmDevices && typeof current.fcmDevices === 'object' && !Array.isArray(current.fcmDevices)
+    ? { ...current.fcmDevices }
+    : {};
+  if (!Object.prototype.hasOwnProperty.call(fcmDevices, installId)) return;
+  delete fcmDevices[installId];
+  await userRef.set({ fcmDevices, fcmUpdatedAt: new Date().toISOString() }, { merge: true });
+}
+
+// O Android registra o token primeiro sem conhecer o usuário do navegador.
+// Depois, a PWA autenticada vincula o installId à conta correta.
+app.post('/notifications/native/device', async (req, res) => {
+  try {
+    const installId = String(req.body?.installId || '').trim();
+    const token = String(req.body?.token || '').trim();
+    const packageName = String(req.body?.packageName || '').trim();
+    const appVersion = String(req.body?.appVersion || '').trim().slice(0, 40);
+
+    if (!validNativeInstallId(installId) || !validFcmToken(token) || packageName !== 'com.allofinancas') {
+      return res.status(400).json({ error: 'Registro de aparelho inválido.' });
+    }
+
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const ref = db.collection('notification_devices').doc(nativeDeviceDocumentId(installId));
+    const previousSnap = await ref.get();
+    const previous = previousSnap.data() || {};
+    const device = {
+      installId,
+      token,
+      platform: 'android',
+      packageName,
+      appVersion,
+      userId: previous.userId || null,
+      updatedAt: new Date().toISOString(),
+    };
+
+    await ref.set(device, { merge: true });
+    if (device.userId) await saveDeviceOnUser(device.userId, installId, device);
+
+    return res.json({ ok: true, bound: Boolean(device.userId) });
+  } catch (error) {
+    logger.warn(`Registro FCM nativo falhou: ${error.message}`);
+    return res.status(500).json({ error: 'Não foi possível registrar este aparelho.' });
+  }
+});
+
+app.post('/notifications/native/bind', requireSignedInUser, async (req, res) => {
+  try {
+    const installId = String(req.body?.installId || '').trim();
+    if (!validNativeInstallId(installId)) {
+      return res.status(400).json({ error: 'Identificador do aplicativo inválido.' });
+    }
+
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const ref = db.collection('notification_devices').doc(nativeDeviceDocumentId(installId));
+    const snap = await ref.get();
+    const device = snap.data() || {};
+
+    if (!snap.exists || !validFcmToken(device.token)) {
+      return res.status(409).json({
+        error: 'O aplicativo ainda está concluindo o registro das notificações.',
+        code: 'native_device_pending',
+      });
+    }
+
+    const userId = req.userIdentity.uid;
+    if (device.userId && device.userId !== userId) {
+      await removeDeviceFromUser(device.userId, installId);
+    }
+
+    await saveDeviceOnUser(userId, installId, device);
+    await ref.set({ userId, boundAt: new Date().toISOString() }, { merge: true });
+
+    return res.json({ ok: true, channel: 'native' });
+  } catch (error) {
+    logger.warn(`Vínculo FCM nativo falhou: ${error.message}`);
+    return res.status(500).json({ error: 'Não foi possível vincular este aparelho à conta.' });
+  }
+});
+
 app.post('/notifications/test', requireSignedInUser, async (req, res) => {
   try {
     const profile = req.userData || {};
-    if (!profile.pushSubscription || profile.pushEnabled === false) {
+    if (!hasNotificationTarget(profile) || profile.pushEnabled === false) {
       return res.status(409).json({
         error: 'Ative as notificações no aplicativo antes de enviar o teste.',
         code: 'push_not_enabled',
@@ -655,7 +780,7 @@ app.post('/notifications/test', requireSignedInUser, async (req, res) => {
       url: '/app?action=open-profile&via=notification',
     });
 
-    if (!sent) return res.status(409).json({ error: 'Não foi possível usar a inscrição de notificações deste aparelho.' });
+    if (!sent) return res.status(409).json({ error: 'Não foi possível usar o canal de notificações deste aparelho.' });
     res.json({ ok: true });
   } catch (error) {
     logger.warn(`Teste de push falhou: ${error.message}`);
