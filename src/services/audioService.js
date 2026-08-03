@@ -71,7 +71,9 @@ async function transcribeAudio(filePath) {
   // Clean up temp file
   try {
     fs.unlinkSync(filePath);
-  } catch (_) {}
+  } catch (_) {
+    // O diretório temporário do sistema também remove arquivos antigos.
+  }
 
   const text = response.data.text?.trim();
   logger.info(`Transcription: "${text}"`);
