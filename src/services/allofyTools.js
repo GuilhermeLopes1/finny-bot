@@ -95,6 +95,129 @@ function summarizeTransactions(items, period = 'month', now = new Date()) {
   return summary;
 }
 
+
+function currentMonthKey(now = new Date()) {
+  const parts = new Intl.DateTimeFormat('pt-BR', {
+    timeZone: 'America/Sao_Paulo',
+    year: 'numeric',
+    month: '2-digit',
+  }).formatToParts(now);
+  const year = parts.find(x => x.type === 'year')?.value;
+  const month = parts.find(x => x.type === 'month')?.value;
+  return `${year}-${month}`;
+}
+
+function normalizeIsoDate(value) {
+  if (!value) return '';
+  if (value?.toDate) value = value.toDate();
+  if (value instanceof Date) {
+    if (Number.isNaN(value.getTime())) return '';
+    return `${value.getFullYear()}-${String(value.getMonth() + 1).padStart(2, '0')}-${String(value.getDate()).padStart(2, '0')}`;
+  }
+  const text = String(value);
+  const match = text.match(/^(\d{4})-(\d{2})-(\d{2})/);
+  return match ? `${match[1]}-${match[2]}-${match[3]}` : '';
+}
+
+function getManualInvoice(card, month) {
+  const entry = card?.invoiceOverrides?.[month];
+  const raw = entry && typeof entry === 'object' ? entry.amount : entry;
+  if (raw === null || raw === undefined || raw === '') return null;
+  const value = asNumber(raw);
+  return Number.isFinite(value) && value >= 0 ? value : null;
+}
+
+function calculateRegisteredCardPurchases(card, cardTransactions, month) {
+  let total = 0;
+  const cardId = String(card?.id || '');
+  for (const purchase of Array.isArray(cardTransactions) ? cardTransactions : []) {
+    const purchaseCardId = String(purchase?.cardId || purchase?.cartaoId || '');
+    if (!cardId || purchaseCardId !== cardId) continue;
+
+    const iso = normalizeIsoDate(purchase?.dataCompra || purchase?.date || purchase?.data);
+    if (!iso) continue;
+    const [year, monthNumber, day] = iso.split('-').map(Number);
+    const installments = Math.max(1, Math.trunc(asNumber(purchase?.parcelas ?? purchase?.installments ?? 1)) || 1);
+    const customInstallment = asNumber(purchase?.valorParcela ?? purchase?.installmentValue);
+    const totalValue = asNumber(purchase?.valorTotal ?? purchase?.amount ?? purchase?.valor ?? purchase?.total);
+    const installmentValue = customInstallment > 0 ? customInstallment : totalValue / installments;
+    if (!Number.isFinite(installmentValue) || installmentValue <= 0) continue;
+
+    const closingDay = Math.trunc(asNumber(card?.closing ?? card?.closingDay ?? card?.fechamento));
+    const closingOffset = closingDay > 0 && day >= closingDay ? 1 : 0;
+    for (let index = 0; index < installments; index += 1) {
+      const installmentDate = new Date(year, monthNumber - 1 + closingOffset + index, 1);
+      const installmentMonth = `${installmentDate.getFullYear()}-${String(installmentDate.getMonth() + 1).padStart(2, '0')}`;
+      if (installmentMonth === month) total += installmentValue;
+    }
+  }
+  return Number(total.toFixed(2));
+}
+
+function buildAccountsAndCards(profile = {}, now = new Date()) {
+  const month = currentMonthKey(now);
+  const cardTransactions = Array.isArray(profile.cardTransactions) ? profile.cardTransactions : [];
+
+  const cards = (Array.isArray(profile.cards) ? profile.cards : []).slice(0, 30).map(card => {
+    const manualInvoice = getManualInvoice(card, month);
+    const registeredPurchases = calculateRegisteredCardPurchases(card, cardTransactions, month);
+    const legacyInvoice = asNumber(card?.invoice ?? card?.fatura ?? card?.currentInvoice);
+
+    let invoiceTotal;
+    let invoiceSource;
+    if (manualInvoice !== null) {
+      invoiceTotal = manualInvoice;
+      invoiceSource = 'manual';
+    } else if (legacyInvoice > 0) {
+      invoiceTotal = legacyInvoice;
+      invoiceSource = 'legacy_manual';
+    } else {
+      invoiceTotal = registeredPurchases;
+      invoiceSource = 'calculated';
+    }
+
+    const paymentEntry = card?.invoicePayments?.[month];
+    const paid = Math.min(invoiceTotal, Math.max(0, asNumber(paymentEntry?.paid)));
+    const invoiceOpen = Math.max(0, Number((invoiceTotal - paid).toFixed(2)));
+    const debtBalance = Math.max(0, asNumber(card?.debtBalance));
+    const totalOpen = Number((invoiceOpen + debtBalance).toFixed(2));
+    const limit = asNumber(card?.limit ?? card?.limite);
+
+    return {
+      name: card?.name || card?.nome || 'Cartão',
+      month,
+      invoice: invoiceOpen,
+      invoiceTotal,
+      paid,
+      debtBalance,
+      totalOpen,
+      invoiceSource,
+      manualInvoice,
+      registeredPurchases,
+      limit,
+      availableLimit: Math.max(0, Number((limit - totalOpen).toFixed(2))),
+      used: asNumber(card?.used ?? card?.utilizado),
+      closingDay: card?.closing ?? card?.closingDay ?? card?.fechamento ?? null,
+      dueDay: card?.due ?? card?.dueDay ?? card?.vencimento ?? null,
+    };
+  });
+
+  return {
+    month,
+    banks: (Array.isArray(profile.banks) ? profile.banks : []).slice(0, 30).map(x => ({
+      name: x.name || x.nome || x.bankName || 'Conta',
+      balance: asNumber(x.balance ?? x.saldo),
+      type: x.type || x.tipo || '',
+    })),
+    cards,
+    totalInvoicesOpen: Number(cards.reduce((sum, card) => sum + card.totalOpen, 0).toFixed(2)),
+    benefits: (Array.isArray(profile.benefits) ? profile.benefits : []).slice(0, 20).map(x => ({
+      name: x.name || x.nome || 'Benefício',
+      balance: asNumber(x.balance ?? x.saldo),
+    })),
+  };
+}
+
 const tools = [
   {
     type: 'function', name: 'get_financial_overview',
@@ -116,7 +239,7 @@ const tools = [
   },
   {
     type: 'function', name: 'get_accounts_and_cards',
-    description: 'Consulta contas bancárias, cartões e benefícios cadastrados.',
+    description: 'Consulta contas bancárias, cartões, faturas atuais (inclusive valores informados manualmente), pagamentos, limites e benefícios cadastrados.',
     strict: true, parameters: { type: 'object', properties: {}, required: [], additionalProperties: false },
   },
   {
@@ -166,11 +289,7 @@ async function executeAllofyTool(name, args, uid, prefetchedProfile = null, cont
       return true;
     }).sort((a, b) => (transactionDate(b)?.getTime() || 0) - (transactionDate(a)?.getTime() || 0)).slice(0, args.limit).map(cleanTransaction);
   }
-  if (name === 'get_accounts_and_cards') return {
-    banks: (profile.banks || []).slice(0, 30).map(x => ({ name: x.name || x.nome || x.bankName || 'Conta', balance: asNumber(x.balance ?? x.saldo), type: x.type || x.tipo || '' })),
-    cards: (profile.cards || []).slice(0, 30).map(x => ({ name: x.name || x.nome || 'Cartão', invoice: asNumber(x.invoice ?? x.fatura ?? x.currentInvoice), limit: asNumber(x.limit ?? x.limite), dueDay: x.dueDay || x.vencimento || null })),
-    benefits: (profile.benefits || []).slice(0, 20).map(x => ({ name: x.name || x.nome || 'Benefício', balance: asNumber(x.balance ?? x.saldo) })),
-  };
+  if (name === 'get_accounts_and_cards') return buildAccountsAndCards(profile);
   if (name === 'get_planning') return {
     goals: (profile.goals || []).slice(0, 30), debts: (profile.debts || []).slice(0, 30), vaults: (profile.cofres || []).slice(0, 30),
   };
@@ -202,4 +321,4 @@ async function executeAllofyTool(name, args, uid, prefetchedProfile = null, cont
   throw new Error(`Ferramenta desconhecida: ${name}`);
 }
 
-module.exports = { tools, executeAllofyTool, summarizeTransactions, periodRange, cleanTransaction, asNumber };
+module.exports = { tools, executeAllofyTool, summarizeTransactions, periodRange, cleanTransaction, asNumber, currentMonthKey, calculateRegisteredCardPurchases, buildAccountsAndCards };
