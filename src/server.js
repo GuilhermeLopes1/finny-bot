@@ -1,33 +1,52 @@
-/**
+<!doctype html>
+<html lang="pt-BR">
+<head>
+<meta charset="utf-8">
+<meta name="viewport" content="width=device-width, initial-scale=1">
+<title>server.js completo</title>
+<style>
+body{font-family:system-ui,sans-serif;margin:0;background:#111827;color:#f9fafb}
+header{position:sticky;top:0;background:#111827;padding:14px;border-bottom:1px solid #374151}
+button{width:100%;padding:14px;border:0;border-radius:12px;font-size:16px;font-weight:700;background:#22c55e;color:#052e16}
+p{font-size:13px;color:#cbd5e1;margin:10px 0 0}
+pre{margin:0;padding:16px;white-space:pre-wrap;word-break:break-word;font:12px/1.55 ui-monospace,SFMono-Regular,Menlo,monospace}
+</style>
+</head>
+<body>
+<header>
+<button onclick="copyCode()">Copiar o código completo</button>
+<p id="status">Arquivo completo: 953 linhas.</p>
+</header>
+<pre id="code">/**
  * Allo API — pagamentos, IA, importação e notificações
  */
 
-require('dotenv').config();
+require(&#x27;dotenv&#x27;).config();
 
-const webpush = require('web-push');
-const cron    = require('node-cron');
+const webpush = require(&#x27;web-push&#x27;);
+const cron    = require(&#x27;node-cron&#x27;);
 
 
 
-const express = require('express');
-const morgan = require('morgan');
+const express = require(&#x27;express&#x27;);
+const morgan = require(&#x27;morgan&#x27;);
 
 // ── VAPID Push Notifications ──
-if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
-  webpush.setVapidDetails('mailto:contato@allofinancas.com', process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
+if (process.env.VAPID_PUBLIC_KEY &amp;&amp; process.env.VAPID_PRIVATE_KEY) {
+  webpush.setVapidDetails(&#x27;mailto:contato@allofinancas.com&#x27;, process.env.VAPID_PUBLIC_KEY, process.env.VAPID_PRIVATE_KEY);
 } else {
-  console.warn('VAPID não configurado: notificações push ficarão desativadas.');
+  console.warn(&#x27;VAPID não configurado: notificações push ficarão desativadas.&#x27;);
 }
-const cors = require('cors');
-const crypto = require('crypto');
-require('./config/firebase');
-const { handleHealthCheck } = require('./controllers/healthController');
-const logger = require('./utils/logger');
-const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require('./controllers/allofyController');
-const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiController');
-const { requireFirebaseUser } = require('./middleware/firebaseAuth');
-const { aiRateLimiter } = require('./middleware/aiRateLimiter');
-const { runNotificationCycle, sendPushToProfile } = require('./services/notificationService');
+const cors = require(&#x27;cors&#x27;);
+const crypto = require(&#x27;crypto&#x27;);
+require(&#x27;./config/firebase&#x27;);
+const { handleHealthCheck } = require(&#x27;./controllers/healthController&#x27;);
+const logger = require(&#x27;./utils/logger&#x27;);
+const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require(&#x27;./controllers/allofyController&#x27;);
+const { handlePdfImport, handleAiAnalysis } = require(&#x27;./controllers/aiController&#x27;);
+const { requireFirebaseUser } = require(&#x27;./middleware/firebaseAuth&#x27;);
+const { aiRateLimiter } = require(&#x27;./middleware/aiRateLimiter&#x27;);
+const { runNotificationCycle, sendPushToProfile } = require(&#x27;./services/notificationService&#x27;);
 
 // ─────────────────────────────────────────────
 // INIT
@@ -42,20 +61,20 @@ const PORT = process.env.PORT || 3000;
 // MIDDLEWARE
 // ─────────────────────────────────────────────
 
-const configuredOrigins = String(process.env.ALLOWED_ORIGINS || 'https://allofinancas.com,https://www.allofinancas.com')
-  .split(',').map(x => x.trim()).filter(Boolean);
-if (process.env.NODE_ENV !== 'production') configuredOrigins.push('http://localhost:3000', 'http://127.0.0.1:5500');
+const configuredOrigins = String(process.env.ALLOWED_ORIGINS || &#x27;https://allofinancas.com,https://www.allofinancas.com&#x27;)
+  .split(&#x27;,&#x27;).map(x =&gt; x.trim()).filter(Boolean);
+if (process.env.NODE_ENV !== &#x27;production&#x27;) configuredOrigins.push(&#x27;http://localhost:3000&#x27;, &#x27;http://127.0.0.1:5500&#x27;);
 app.use(cors({
   origin(origin, callback) {
     if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
-    return callback(new Error('Origem não autorizada pelo CORS'));
+    return callback(new Error(&#x27;Origem não autorizada pelo CORS&#x27;));
   },
-  allowedHeaders: ['Content-Type', 'Authorization'],
-  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+  allowedHeaders: [&#x27;Content-Type&#x27;, &#x27;Authorization&#x27;],
+  methods: [&#x27;GET&#x27;, &#x27;POST&#x27;, &#x27;DELETE&#x27;, &#x27;OPTIONS&#x27;],
 }));
-app.use(express.json({ limit: '10mb' }));
-app.use(express.urlencoded({ extended: true, limit: '10mb' }));
-app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
+app.use(express.json({ limit: &#x27;10mb&#x27; }));
+app.use(express.urlencoded({ extended: true, limit: &#x27;10mb&#x27; }));
+app.use(morgan(&#x27;combined&#x27;, { stream: { write: (msg) =&gt; logger.info(msg.trim()) } }));
 
 // ─────────────────────────────────────────────
 // ROUTES
@@ -64,12 +83,12 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) }
 // ─────────────────────────────────────────────
 // PDF IMPORT ROUTE
 // ─────────────────────────────────────────────
-const multer = require('multer');
+const multer = require(&#x27;multer&#x27;);
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const requireAiUser = requireFirebaseUser({ requirePro: true });
 const requireSignedInUser = requireFirebaseUser();
-app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
+app.post(&#x27;/import-pdf&#x27;, requireAiUser, aiRateLimiter(&#x27;import&#x27;), upload.single(&#x27;file&#x27;), handlePdfImport);
 
 // ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
@@ -85,48 +104,48 @@ app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('f
 // Campos gravados no Firestore:
 //   isPro              → true se plano pro ou pro+
 //   isMotorista        → true se motorista ou pro+
-//   proPlan            → ID do plano (ex: 'pro-monthly')
+//   proPlan            → ID do plano (ex: &#x27;pro-monthly&#x27;)
 //   proExpiresAt       → expiração geral
 //   motoristaExpiresAt → expiração motorista
 // ─────────────────────────────────────────────
 
 const PLANOS_DEF = {
   // ── Motorista (gratuito + motorista) ──
-  'motorista-monthly': { isPro:false, isMotorista:true,  dias:30,  label:'Motorista Mensal' },
-  'motorista-yearly':  { isPro:false, isMotorista:true,  dias:365, label:'Motorista Anual'  },
+  &#x27;motorista-monthly&#x27;: { isPro:false, isMotorista:true,  dias:30,  label:&#x27;Motorista Mensal&#x27; },
+  &#x27;motorista-yearly&#x27;:  { isPro:false, isMotorista:true,  dias:365, label:&#x27;Motorista Anual&#x27;  },
 
 // ── Pro (financeiro pessoal completo) ──
-  'pro-monthly':             { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal'              },
-  'pro-yearly':              { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual'               },
+  &#x27;pro-monthly&#x27;:             { isPro:true,  isMotorista:false, dias:30,  label:&#x27;Pro Mensal&#x27;              },
+  &#x27;pro-yearly&#x27;:              { isPro:true,  isMotorista:false, dias:365, label:&#x27;Pro Anual&#x27;               },
 
   // ── Pro Motorista (Pro + Motorista) ──
-  'pro-motorista-monthly':   { isPro:true,  isMotorista:true,  dias:30,  label:'Pro Motorista Mensal'    },
-  'pro-motorista-yearly':    { isPro:true,  isMotorista:true,  dias:365, label:'Pro Motorista Anual'     },
+  &#x27;pro-motorista-monthly&#x27;:   { isPro:true,  isMotorista:true,  dias:30,  label:&#x27;Pro Motorista Mensal&#x27;    },
+  &#x27;pro-motorista-yearly&#x27;:    { isPro:true,  isMotorista:true,  dias:365, label:&#x27;Pro Motorista Anual&#x27;     },
 
   // ── Pro+ (tudo liberado) ──
-  'proplus-monthly':         { isPro:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'             },
-  'proplus-yearly':          { isPro:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'              },
+  &#x27;proplus-monthly&#x27;:         { isPro:true,  isMotorista:true,  dias:30,  label:&#x27;Pro+ Mensal&#x27;             },
+  &#x27;proplus-yearly&#x27;:          { isPro:true,  isMotorista:true,  dias:365, label:&#x27;Pro+ Anual&#x27;              },
 
   // Retrocompatibilidade com planos antigos
-  'monthly': { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
-  'yearly':  { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual (legado)'  },
+  &#x27;monthly&#x27;: { isPro:true,  isMotorista:false, dias:30,  label:&#x27;Pro Mensal (legado)&#x27; },
+  &#x27;yearly&#x27;:  { isPro:true,  isMotorista:false, dias:365, label:&#x27;Pro Anual (legado)&#x27;  },
 };
 
 // Busca preço do plano no Firestore (respeita promoções)
 async function getPlanPrice(plan, pricing) {
-  const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
+  const promoAtiva = pricing.promoExpires &amp;&amp; new Date(pricing.promoExpires) &gt; new Date();
   const defaults = {
-    'motorista-monthly': pricing.motorista        || 9.90,
-    'motorista-yearly':  pricing.motoristaYearly  || 89.90,
-    'pro-monthly':             promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
-    'pro-yearly':              promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
-    'pro-motorista-monthly':   pricing.proMotorista       || 24.90,
-    'pro-motorista-yearly':    pricing.proMotoristaYearly || 229.90,
-    'proplus-monthly':         pricing.proPlus            || 29.90,
-    'proplus-yearly':          pricing.proPlusYearly      || 269.90,
+    &#x27;motorista-monthly&#x27;: pricing.motorista        || 9.90,
+    &#x27;motorista-yearly&#x27;:  pricing.motoristaYearly  || 89.90,
+    &#x27;pro-monthly&#x27;:             promoAtiva &amp;&amp; pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
+    &#x27;pro-yearly&#x27;:              promoAtiva &amp;&amp; pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
+    &#x27;pro-motorista-monthly&#x27;:   pricing.proMotorista       || 24.90,
+    &#x27;pro-motorista-yearly&#x27;:    pricing.proMotoristaYearly || 229.90,
+    &#x27;proplus-monthly&#x27;:         pricing.proPlus            || 29.90,
+    &#x27;proplus-yearly&#x27;:          pricing.proPlusYearly      || 269.90,
     // legado
-    'monthly':           promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
-    'yearly':            promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
+    &#x27;monthly&#x27;:           promoAtiva &amp;&amp; pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
+    &#x27;yearly&#x27;:            promoAtiva &amp;&amp; pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
   };
   return defaults[plan] || 9.90;
 }
@@ -135,10 +154,10 @@ async function getPlanPrice(plan, pricing) {
 // Busca pricing sempre fresco do Firestore
 async function fetchPricing(db) {
   try {
-    const doc = await db.collection('settings').doc('pricing').get();
+    const doc = await db.collection(&#x27;settings&#x27;).doc(&#x27;pricing&#x27;).get();
     return doc.exists ? doc.data() : {};
   } catch(e) {
-    console.warn('fetchPricing error:', e.message);
+    console.warn(&#x27;fetchPricing error:&#x27;, e.message);
     return {};
   }
 }
@@ -146,14 +165,14 @@ async function fetchPricing(db) {
 // Monta o objeto Firestore para ativar um plano
 async function buildPlanUpdate(plan, subId, db) {
   const def = PLANOS_DEF[plan];
-  if (!def) { console.warn('Plano desconhecido:', plan); return null; }
+  if (!def) { console.warn(&#x27;Plano desconhecido:&#x27;, plan); return null; }
 
   const now     = new Date();
   const expires = new Date(now.getTime() + def.dias * 24 * 60 * 60 * 1000).toISOString();
 
   // Busca estado atual do usuário para não sobrescrever módulos já ativos
   let current = {};
-  if (db && subId === null) {
+  if (db &amp;&amp; subId === null) {
     // será chamado com uid quando disponível
   }
 
@@ -163,7 +182,7 @@ async function buildPlanUpdate(plan, subId, db) {
     proPlan:   plan,
     proSince:  now.toISOString(),
     proCancelled: false,
-    ...(subId && { proSubscriptionId: subId }),
+    ...(subId &amp;&amp; { proSubscriptionId: subId }),
   };
 
   // isPro: ativa se o novo plano tem, mas nunca revoga
@@ -185,10 +204,10 @@ async function buildPlanUpdate(plan, subId, db) {
 // ─────────────────────────────────────────────
 // ROTA PÚBLICA — PREÇOS (usada pelo planos.html)
 // ─────────────────────────────────────────────
-app.get('/pricing', async (req, res) => {
-  res.header('Access-Control-Allow-Origin', '*');
+app.get(&#x27;/pricing&#x27;, async (req, res) =&gt; {
+  res.header(&#x27;Access-Control-Allow-Origin&#x27;, &#x27;*&#x27;);
   try {
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const pricing = await fetchPricing(getDb());
     res.json(pricing);
   } catch(e) {
@@ -199,49 +218,49 @@ app.get('/pricing', async (req, res) => {
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
 // ─────────────────────────────────────────────
-app.post('/create-payment', async (req, res) => {
+app.post(&#x27;/create-payment&#x27;, async (req, res) =&gt; {
   try {
     const { plan, userId, userEmail, userName } = req.body;
-    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!plan || !userId) return res.status(400).json({ error: &#x27;Dados inválidos&#x27; });
     if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
 
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
     const pricing = await fetchPricing(db);
 
     const price = await getPlanPrice(plan, pricing);
     const def   = PLANOS_DEF[plan];
-    const isYearly   = plan.endsWith('-yearly') || plan === 'yearly';
+    const isYearly   = plan.endsWith(&#x27;-yearly&#x27;) || plan === &#x27;yearly&#x27;;
     const frequency  = isYearly ? 12 : 1;
 
-    const response = await fetch('https://api.mercadopago.com/preapproval', {
-      method: 'POST',
+    const response = await fetch(&#x27;https://api.mercadopago.com/preapproval&#x27;, {
+      method: &#x27;POST&#x27;,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+        &#x27;Content-Type&#x27;: &#x27;application/json&#x27;,
+        &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        reason:             'Allo Finanças — ' + def.label,
-        external_reference: userId + '|' + plan,
-        payer_email:        userEmail || '',
+        reason:             &#x27;Allo Finanças — &#x27; + def.label,
+        external_reference: userId + &#x27;|&#x27; + plan,
+        payer_email:        userEmail || &#x27;&#x27;,
         auto_recurring: {
           frequency,
-          frequency_type:     'months',
+          frequency_type:     &#x27;months&#x27;,
           transaction_amount: price,
-          currency_id:        'BRL'
+          currency_id:        &#x27;BRL&#x27;
         },
-        back_url:         'https://allofinancas.com/app?payment=success',
-        status:           'pending',
-        notification_url: 'https://finny-bot.onrender.com/webhook-mp'
+        back_url:         &#x27;https://allofinancas.com/app?payment=success&#x27;,
+        status:           &#x27;pending&#x27;,
+        notification_url: &#x27;https://finny-bot.onrender.com/webhook-mp&#x27;
       })
     });
 
     const data = await response.json();
-    console.log('MP preapproval response:', JSON.stringify(data));
-    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar assinatura' });
+    console.log(&#x27;MP preapproval response:&#x27;, JSON.stringify(data));
+    if (!data.init_point) return res.status(500).json({ error: &#x27;Erro ao criar assinatura&#x27; });
     res.json({ url: data.init_point, plan: def.label, price });
   } catch(e) {
-    console.error('MP create-payment error:', e);
+    console.error(&#x27;MP create-payment error:&#x27;, e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -249,51 +268,51 @@ app.post('/create-payment', async (req, res) => {
 // ─────────────────────────────────────────────
 // MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
 // ─────────────────────────────────────────────
-app.post('/create-payment-pix', async (req, res) => {
+app.post(&#x27;/create-payment-pix&#x27;, async (req, res) =&gt; {
   try {
     const { plan, userId, userEmail, userName } = req.body;
-    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
+    if (!plan || !userId) return res.status(400).json({ error: &#x27;Dados inválidos&#x27; });
     if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
 
-    const { getDb: getDb2 } = require('./config/firebase');
+    const { getDb: getDb2 } = require(&#x27;./config/firebase&#x27;);
     const db2 = getDb2();
     const pricing = await fetchPricing(db2);
 
     const price = await getPlanPrice(plan, pricing);
     const def   = PLANOS_DEF[plan];
 
-    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
-      method: 'POST',
+    const response = await fetch(&#x27;https://api.mercadopago.com/checkout/preferences&#x27;, {
+      method: &#x27;POST&#x27;,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+        &#x27;Content-Type&#x27;: &#x27;application/json&#x27;,
+        &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN
       },
       body: JSON.stringify({
-        items: [{ title: 'Allo Finanças — ' + def.label, quantity: 1, currency_id: 'BRL', unit_price: price }],
-        payer:              { email: userEmail || '', name: userName || '' },
-        external_reference: userId + '|' + plan,
+        items: [{ title: &#x27;Allo Finanças — &#x27; + def.label, quantity: 1, currency_id: &#x27;BRL&#x27;, unit_price: price }],
+        payer:              { email: userEmail || &#x27;&#x27;, name: userName || &#x27;&#x27; },
+        external_reference: userId + &#x27;|&#x27; + plan,
         back_urls: {
-          success: 'https://allofinancas.com/app?payment=success',
-          failure: 'https://allofinancas.com/app?payment=failure',
-          pending: 'https://allofinancas.com/app?payment=pending'
+          success: &#x27;https://allofinancas.com/app?payment=success&#x27;,
+          failure: &#x27;https://allofinancas.com/app?payment=failure&#x27;,
+          pending: &#x27;https://allofinancas.com/app?payment=pending&#x27;
         },
-        auto_return:            'approved',
-        statement_descriptor:   'Allo Financas',
-        notification_url:       'https://finny-bot.onrender.com/webhook-mp',
+        auto_return:            &#x27;approved&#x27;,
+        statement_descriptor:   &#x27;Allo Financas&#x27;,
+        notification_url:       &#x27;https://finny-bot.onrender.com/webhook-mp&#x27;,
         payment_methods: {
           excluded_payment_types: [
-            { id: 'credit_card' },
-            { id: 'debit_card' }
+            { id: &#x27;credit_card&#x27; },
+            { id: &#x27;debit_card&#x27; }
           ]
         }
       })
     });
 
     const data = await response.json();
-    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    if (!data.init_point) return res.status(500).json({ error: &#x27;Erro ao criar pagamento&#x27; });
     res.json({ url: data.init_point, plan: def.label, price });
   } catch(e) {
-    console.error('MP PIX error:', e);
+    console.error(&#x27;MP PIX error:&#x27;, e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -301,44 +320,44 @@ app.post('/create-payment-pix', async (req, res) => {
 // ─────────────────────────────────────────────
 // MERCADO PAGO — CANCELAR ASSINATURA
 // ─────────────────────────────────────────────
-app.post('/cancel-subscription', async (req, res) => {
+app.post(&#x27;/cancel-subscription&#x27;, async (req, res) =&gt; {
   try {
     const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId obrigatório' });
+    if (!userId) return res.status(400).json({ error: &#x27;userId obrigatório&#x27; });
 
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
 
-    const userDoc  = await db.collection('users').doc(userId).get();
+    const userDoc  = await db.collection(&#x27;users&#x27;).doc(userId).get();
     const userData = userDoc.data() || {};
     const subscriptionId = userData.proSubscriptionId;
 
-    if (!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+    if (!subscriptionId) return res.status(400).json({ error: &#x27;Nenhuma assinatura ativa&#x27; });
 
     const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${subscriptionId}`, {
-      method: 'PUT',
+      method: &#x27;PUT&#x27;,
       headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
+        &#x27;Content-Type&#x27;: &#x27;application/json&#x27;,
+        &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN
       },
-      body: JSON.stringify({ status: 'cancelled' })
+      body: JSON.stringify({ status: &#x27;cancelled&#x27; })
     });
 
     const mpData = await mpRes.json();
-    console.log('MP cancel response:', JSON.stringify(mpData));
+    console.log(&#x27;MP cancel response:&#x27;, JSON.stringify(mpData));
 
-    if (mpData.status !== 'cancelled') return res.status(500).json({ error: 'Erro ao cancelar no Mercado Pago' });
+    if (mpData.status !== &#x27;cancelled&#x27;) return res.status(500).json({ error: &#x27;Erro ao cancelar no Mercado Pago&#x27; });
 
     // Mantém Pro até expirar naturalmente — só marca como cancelado
-    await db.collection('users').doc(userId).set({
+    await db.collection(&#x27;users&#x27;).doc(userId).set({
       proCancelled:   true,
       proCancelledAt: new Date().toISOString(),
-      proSubscriptionStatus: 'cancelled',
+      proSubscriptionStatus: &#x27;cancelled&#x27;,
     }, { merge: true });
 
     res.json({ success: true });
   } catch(e) {
-    console.error('Cancel error:', e);
+    console.error(&#x27;Cancel error:&#x27;, e);
     res.status(500).json({ error: e.message });
   }
 });
@@ -347,157 +366,157 @@ app.post('/cancel-subscription', async (req, res) => {
 // MERCADO PAGO — WEBHOOK
 // ─────────────────────────────────────────────
 function verifyMercadoPagoSignature(req) {
-  const signature = req.headers['x-signature'];
+  const signature = req.headers[&#x27;x-signature&#x27;];
   const secret    = process.env.MP_WEBHOOK_SECRET;
   if (!signature || !secret) return false;
-  const hashPart = (signature.split(',').find(p => p.startsWith('v1=')) || '').replace('v1=', '');
-  const generated = crypto.createHmac('sha256', secret).update(JSON.stringify(req.body)).digest('hex');
+  const hashPart = (signature.split(&#x27;,&#x27;).find(p =&gt; p.startsWith(&#x27;v1=&#x27;)) || &#x27;&#x27;).replace(&#x27;v1=&#x27;, &#x27;&#x27;);
+  const generated = crypto.createHmac(&#x27;sha256&#x27;, secret).update(JSON.stringify(req.body)).digest(&#x27;hex&#x27;);
   return generated === hashPart;
 }
 
-app.post('/webhook-mp', async (req, res) => {
+app.post(&#x27;/webhook-mp&#x27;, async (req, res) =&gt; {
   // Responde imediatamente para o MP não retentar
   res.sendStatus(200);
 
   try {
     const { type, data } = req.body;
-    if (!type || !data) { console.warn('Webhook inválido (sem dados)'); return; }
+    if (!type || !data) { console.warn(&#x27;Webhook inválido (sem dados)&#x27;); return; }
 
-    console.log('Webhook MP:', type, data);
+    console.log(&#x27;Webhook MP:&#x27;, type, data);
 
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
 
     // ── PAGAMENTO ÚNICO (PIX/Boleto) ──
-    if (type === 'payment') {
+    if (type === &#x27;payment&#x27;) {
       const paymentId = data?.id;
       if (!paymentId) return;
 
-      const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      const pmtRes = await fetch(&#x27;https://api.mercadopago.com/v1/payments/&#x27; + paymentId, {
+        headers: { &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN }
       });
       const pmt = await pmtRes.json();
-      console.log('STATUS PAGAMENTO:', pmt.status, '| PLANO:', pmt.external_reference);
+      console.log(&#x27;STATUS PAGAMENTO:&#x27;, pmt.status, &#x27;| PLANO:&#x27;, pmt.external_reference);
 
-      if (pmt.status !== 'approved') return;
+      if (pmt.status !== &#x27;approved&#x27;) return;
 
-      const [userId, plan] = (pmt.external_reference || '').split('|');
+      const [userId, plan] = (pmt.external_reference || &#x27;&#x27;).split(&#x27;|&#x27;);
       if (!userId || !plan) return;
 
       const update = await buildPlanUpdate(plan, null);
       if (!update) return;
 
       update.proPaymentId = String(paymentId);
-      await db.collection('users').doc(userId).set(update, { merge: true });
-      console.log('✅ Plano ativado (pagamento):', plan, '→', userId);
+      await db.collection(&#x27;users&#x27;).doc(userId).set(update, { merge: true });
+      console.log(&#x27;✅ Plano ativado (pagamento):&#x27;, plan, &#x27;→&#x27;, userId);
     }
 
     // ── ASSINATURA CRIADA / ATUALIZADA ──
-    if (type === 'subscription_preapproval') {
+    if (type === &#x27;subscription_preapproval&#x27;) {
       const subId = data?.id;
       if (!subId) return;
 
-      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      const subRes = await fetch(&#x27;https://api.mercadopago.com/preapproval/&#x27; + subId, {
+        headers: { &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN }
       });
       const sub = await subRes.json();
 
-      const [userId, plan] = (sub.external_reference || '').split('|');
+      const [userId, plan] = (sub.external_reference || &#x27;&#x27;).split(&#x27;|&#x27;);
       if (!userId) return;
 
       // Salva ID e status da assinatura
-      await db.collection('users').doc(userId).set({
+      await db.collection(&#x27;users&#x27;).doc(userId).set({
         proSubscriptionId:     subId,
         proSubscriptionStatus: sub.status,
       }, { merge: true });
 
-      console.log('📋 Assinatura salva:', subId, '| status:', sub.status);
+      console.log(&#x27;📋 Assinatura salva:&#x27;, subId, &#x27;| status:&#x27;, sub.status);
 
       // Cancelamento
-      if (sub.status === 'cancelled') {
-        await db.collection('users').doc(userId).set({
+      if (sub.status === &#x27;cancelled&#x27;) {
+        await db.collection(&#x27;users&#x27;).doc(userId).set({
           // No cancelamento, revoga apenas o módulo do plano cancelado
-        ...(PLANOS_DEF[plan]?.isPro        && { isPro: false,        proExpiresAt: null }),
-        ...(PLANOS_DEF[plan]?.isMotorista  && { isMotorista: false,  motoristaExpiresAt: null }),
+        ...(PLANOS_DEF[plan]?.isPro        &amp;&amp; { isPro: false,        proExpiresAt: null }),
+        ...(PLANOS_DEF[plan]?.isMotorista  &amp;&amp; { isMotorista: false,  motoristaExpiresAt: null }),
         proCancelled:          true,
         proCancelledAt:        new Date().toISOString(),
-        proSubscriptionStatus: 'cancelled',
+        proSubscriptionStatus: &#x27;cancelled&#x27;,
         }, { merge: true });
-        console.log('❌ Plano cancelado:', userId);
+        console.log(&#x27;❌ Plano cancelado:&#x27;, userId);
       }
     }
 
     // ── COBRANÇA RECORRENTE APROVADA ──
-    if (type === 'subscription_authorized_payment') {
+    if (type === &#x27;subscription_authorized_payment&#x27;) {
       const subId = data?.id;
       if (!subId) return;
 
-      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+      const subRes = await fetch(&#x27;https://api.mercadopago.com/preapproval/&#x27; + subId, {
+        headers: { &#x27;Authorization&#x27;: &#x27;Bearer &#x27; + process.env.MP_ACCESS_TOKEN }
       });
       const sub = await subRes.json();
 
-      const [userId, plan] = (sub.external_reference || '').split('|');
+      const [userId, plan] = (sub.external_reference || &#x27;&#x27;).split(&#x27;|&#x27;);
       if (!userId || !plan) return;
 
       const update = await buildPlanUpdate(plan, subId);
       if (!update) return;
 
-      await db.collection('users').doc(userId).set(update, { merge: true });
-      console.log('🔥 Renovação via assinatura:', plan, '→', userId);
+      await db.collection(&#x27;users&#x27;).doc(userId).set(update, { merge: true });
+      console.log(&#x27;🔥 Renovação via assinatura:&#x27;, plan, &#x27;→&#x27;, userId);
     }
 
   } catch(e) {
-    console.error('Webhook MP error:', e);
+    console.error(&#x27;Webhook MP error:&#x27;, e);
   }
 });
 
 // ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
-app.post('/ai-analysis', requireAiUser, aiRateLimiter('analysis'), handleAiAnalysis);
+app.post(&#x27;/ai-analysis&#x27;, requireAiUser, aiRateLimiter(&#x27;analysis&#x27;), handleAiAnalysis);
 
 // Indicação processada no servidor para impedir concessão de plano pelo cliente.
-app.post('/apply-referral', async (req, res) => {
+app.post(&#x27;/apply-referral&#x27;, async (req, res) =&gt; {
   try {
-    const token = String(req.headers.authorization || '').replace(/^Bearer\s+/i, '');
-    const code = String(req.body?.code || '').trim().toUpperCase();
-    if (!token) return res.status(401).json({ error: 'Autenticação necessária' });
-    if (!/^ALLO-[A-Z0-9-]+$/.test(code)) return res.status(400).json({ error: 'Código inválido' });
+    const token = String(req.headers.authorization || &#x27;&#x27;).replace(/^Bearer\s+/i, &#x27;&#x27;);
+    const code = String(req.body?.code || &#x27;&#x27;).trim().toUpperCase();
+    if (!token) return res.status(401).json({ error: &#x27;Autenticação necessária&#x27; });
+    if (!/^ALLO-[A-Z0-9-]+$/.test(code)) return res.status(400).json({ error: &#x27;Código inválido&#x27; });
 
-    const { getDb, admin } = require('./config/firebase');
+    const { getDb, admin } = require(&#x27;./config/firebase&#x27;);
     const decoded = await admin.auth().verifyIdToken(token);
     const db = getDb();
-    const userRef = db.collection('users').doc(decoded.uid);
-    const referralRef = db.collection('referrals').doc(code);
+    const userRef = db.collection(&#x27;users&#x27;).doc(decoded.uid);
+    const referralRef = db.collection(&#x27;referrals&#x27;).doc(code);
 
-    const result = await db.runTransaction(async tx => {
+    const result = await db.runTransaction(async tx =&gt; {
       const [userSnap, referralSnap] = await Promise.all([tx.get(userRef), tx.get(referralRef)]);
-      if (!referralSnap.exists) throw Object.assign(new Error('Código não encontrado'), { status: 404 });
+      if (!referralSnap.exists) throw Object.assign(new Error(&#x27;Código não encontrado&#x27;), { status: 404 });
       const referrerId = referralSnap.data().userId;
-      if (!referrerId || referrerId === decoded.uid) throw Object.assign(new Error('Código não permitido'), { status: 400 });
+      if (!referrerId || referrerId === decoded.uid) throw Object.assign(new Error(&#x27;Código não permitido&#x27;), { status: 400 });
       const userData = userSnap.data() || {};
-      if (userData.referralProcessed) throw Object.assign(new Error('Código já utilizado'), { status: 409 });
+      if (userData.referralProcessed) throw Object.assign(new Error(&#x27;Código já utilizado&#x27;), { status: 409 });
 
-      const referrerRef = db.collection('users').doc(referrerId);
+      const referrerRef = db.collection(&#x27;users&#x27;).doc(referrerId);
       const referrerSnap = await tx.get(referrerRef);
-      if (!referrerSnap.exists) throw Object.assign(new Error('Indicador não encontrado'), { status: 404 });
+      if (!referrerSnap.exists) throw Object.assign(new Error(&#x27;Indicador não encontrado&#x27;), { status: 404 });
       const now = new Date();
       const trialExpires = new Date(now.getTime() + 7*86400000).toISOString();
       const referrerData = referrerSnap.data() || {};
       const currentExpiry = new Date(referrerData.proExpiresAt || 0);
-      const base = currentExpiry > now ? currentExpiry : now;
+      const base = currentExpiry &gt; now ? currentExpiry : now;
       const referrerExpires = new Date(base.getTime() + 30*86400000).toISOString();
 
-      tx.set(userRef, { isPro:true, proPlan:'trial', proSince:now.toISOString(), proExpiresAt:trialExpires, referralProcessed:true, referredBy:referrerId }, { merge:true });
-      tx.set(referrerRef, { isPro:true, proPlan:referrerData.proPlan || 'referral', proExpiresAt:referrerExpires, referralCount:(referrerData.referralCount || 0)+1 }, { merge:true });
-      tx.set(db.collection('admin_messages').doc(), { target:'user', userId:referrerId, type:'success', title:'🎉 Sua indicação deu frutos!', body:'Um amigo usou seu código. Você ganhou mais 1 mês de Pro.', createdAt:admin.firestore.FieldValue.serverTimestamp(), createdBy:'sistema' });
+      tx.set(userRef, { isPro:true, proPlan:&#x27;trial&#x27;, proSince:now.toISOString(), proExpiresAt:trialExpires, referralProcessed:true, referredBy:referrerId }, { merge:true });
+      tx.set(referrerRef, { isPro:true, proPlan:referrerData.proPlan || &#x27;referral&#x27;, proExpiresAt:referrerExpires, referralCount:(referrerData.referralCount || 0)+1 }, { merge:true });
+      tx.set(db.collection(&#x27;admin_messages&#x27;).doc(), { target:&#x27;user&#x27;, userId:referrerId, type:&#x27;success&#x27;, title:&#x27;🎉 Sua indicação deu frutos!&#x27;, body:&#x27;Um amigo usou seu código. Você ganhou mais 1 mês de Pro.&#x27;, createdAt:admin.firestore.FieldValue.serverTimestamp(), createdBy:&#x27;sistema&#x27; });
       return { referrerId, trialExpires };
     });
     res.json({ ok:true, ...result });
   } catch (e) {
-    logger.warn('apply-referral:', e.message);
-    res.status(e.status || 500).json({ error:e.message || 'Erro ao aplicar indicação' });
+    logger.warn(&#x27;apply-referral:&#x27;, e.message);
+    res.status(e.status || 500).json({ error:e.message || &#x27;Erro ao aplicar indicação&#x27; });
   }
 });
 
@@ -506,35 +525,35 @@ app.post('/apply-referral', async (req, res) => {
 // ─────────────────────────────────────────────
 async function requireAdminRequest(req, res, next) {
   try {
-    const token=String(req.headers.authorization||'').replace(/^Bearer\s+/i,'');
-    if(!token) return res.status(401).json({error:'Autenticação necessária'});
-    const {getDb,admin}=require('./config/firebase');
+    const token=String(req.headers.authorization||&#x27;&#x27;).replace(/^Bearer\s+/i,&#x27;&#x27;);
+    if(!token) return res.status(401).json({error:&#x27;Autenticação necessária&#x27;});
+    const {getDb,admin}=require(&#x27;./config/firebase&#x27;);
     const decoded=await admin.auth().verifyIdToken(token,true);
-    const userDoc=await getDb().collection('users').doc(decoded.uid).get();
+    const userDoc=await getDb().collection(&#x27;users&#x27;).doc(decoded.uid).get();
     const profile=userDoc.data()||{};
-    if(profile.role!=='admin'&&decoded.admin!==true) return res.status(403).json({error:'Acesso administrativo negado'});
-    req.adminIdentity={uid:decoded.uid,email:decoded.email||profile.email||'',profile};
+    if(profile.role!==&#x27;admin&#x27;&amp;&amp;decoded.admin!==true) return res.status(403).json({error:&#x27;Acesso administrativo negado&#x27;});
+    req.adminIdentity={uid:decoded.uid,email:decoded.email||profile.email||&#x27;&#x27;,profile};
     next();
   } catch(e) {
-    logger.warn('Admin auth denied:',e.message);
-    res.status(401).json({error:'Sessão administrativa inválida ou expirada'});
+    logger.warn(&#x27;Admin auth denied:&#x27;,e.message);
+    res.status(401).json({error:&#x27;Sessão administrativa inválida ou expirada&#x27;});
   }
 }
 
-async function writeAdminAudit(req,action,targetUid,outcome='success',details={}){
+async function writeAdminAudit(req,action,targetUid,outcome=&#x27;success&#x27;,details={}){
   try{
-    const {getDb,admin}=require('./config/firebase');
+    const {getDb,admin}=require(&#x27;./config/firebase&#x27;);
     const now=new Date().toISOString();
-    await getDb().collection('admin_logs').add({
+    await getDb().collection(&#x27;admin_logs&#x27;).add({
       action,targetUid,outcome,details,
       adminUid:req.adminIdentity?.uid||null,
       admin:req.adminIdentity?.email||null,
-      msg:`${action} · ${targetUid||'sistema'} · ${outcome}`,
-      tipo:outcome==='success'?'green':'red',
+      msg:`${action} · ${targetUid||&#x27;sistema&#x27;} · ${outcome}`,
+      tipo:outcome===&#x27;success&#x27;?&#x27;green&#x27;:&#x27;red&#x27;,
       ts:now,
       createdAt:admin.firestore.FieldValue.serverTimestamp(),
     });
-  }catch(e){logger.warn('Admin audit write failed:',e.message)}
+  }catch(e){logger.warn(&#x27;Admin audit write failed:&#x27;,e.message)}
 }
 
 function serializeAuthUser(user){
@@ -545,106 +564,164 @@ function serializeAuthUser(user){
     creationTime:user.metadata?.creationTime||null,
     lastSignInTime:user.metadata?.lastSignInTime||null,
     lastRefreshTime:user.metadata?.lastRefreshTime||null,
-    providers:(user.providerData||[]).map(p=>p.providerId).filter(Boolean),
+    providers:(user.providerData||[]).map(p=&gt;p.providerId).filter(Boolean),
     customClaims:user.customClaims||{},
   };
 }
 
-app.get('/admin/health',requireAdminRequest,async(req,res)=>{
-  const {admin}=require('./config/firebase');
-  res.json({ok:true,service:'Allo Admin API',projectId:admin.app().options.projectId||null,time:new Date().toISOString()});
+app.get(&#x27;/admin/health&#x27;,requireAdminRequest,async(req,res)=&gt;{
+  const {admin}=require(&#x27;./config/firebase&#x27;);
+  res.json({ok:true,service:&#x27;Allo Admin API&#x27;,projectId:admin.app().options.projectId||null,time:new Date().toISOString()});
 });
 
-app.get('/admin/users',requireAdminRequest,async(req,res)=>{
+app.get(&#x27;/admin/users&#x27;,requireAdminRequest,async(req,res)=&gt;{
   try{
-    const {admin}=require('./config/firebase');
+    const {admin}=require(&#x27;./config/firebase&#x27;);
     const users=[];let pageToken;
     do{
       const page=await admin.auth().listUsers(1000,pageToken);
       users.push(...page.users.map(serializeAuthUser));
       pageToken=page.pageToken;
-    }while(pageToken&&users.length<10000);
-    await writeAdminAudit(req,'users.list',null,'success',{count:users.length});
+    }while(pageToken&amp;&amp;users.length&lt;10000);
+    await writeAdminAudit(req,&#x27;users.list&#x27;,null,&#x27;success&#x27;,{count:users.length});
     res.json({ok:true,count:users.length,users});
-  }catch(e){await writeAdminAudit(req,'users.list',null,'error',{message:e.message});res.status(500).json({error:'Não foi possível listar os usuários'})}
+  }catch(e){await writeAdminAudit(req,&#x27;users.list&#x27;,null,&#x27;error&#x27;,{message:e.message});res.status(500).json({error:&#x27;Não foi possível listar os usuários&#x27;})}
 });
 
-app.get('/admin/users/:uid',requireAdminRequest,async(req,res)=>{
+app.get(&#x27;/admin/users/:uid&#x27;,requireAdminRequest,async(req,res)=&gt;{
   try{
-    const {admin}=require('./config/firebase');
+    const {admin}=require(&#x27;./config/firebase&#x27;);
     const user=await admin.auth().getUser(req.params.uid);
     res.json({ok:true,user:serializeAuthUser(user)});
-  }catch(e){res.status(e.code==='auth/user-not-found'?404:500).json({error:'Usuário não encontrado'})}
+  }catch(e){res.status(e.code===&#x27;auth/user-not-found&#x27;?404:500).json({error:&#x27;Usuário não encontrado&#x27;})}
 });
 
-app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
-  const uid=String(req.params.uid||'');
-  const action=String(req.body?.action||'');
-  const {getDb,admin}=require('./config/firebase');
+app.post(&#x27;/admin/users/:uid/action&#x27;,requireAdminRequest,async(req,res)=&gt;{
+  const uid=String(req.params.uid||&#x27;&#x27;);
+  const action=String(req.body?.action||&#x27;&#x27;);
+  const {getDb,admin}=require(&#x27;./config/firebase&#x27;);
   const db=getDb();
   try{
-    if(!uid) return res.status(400).json({error:'UID obrigatório'});
-    const targetDoc=await db.collection('users').doc(uid).get();
+    if(!uid) return res.status(400).json({error:&#x27;UID obrigatório&#x27;});
+    const targetDoc=await db.collection(&#x27;users&#x27;).doc(uid).get();
     const target=targetDoc.data()||{};
-    const destructive=['set-disabled','delete-account'];
-    if(uid===req.adminIdentity.uid&&destructive.includes(action)) return res.status(400).json({error:'Esta ação não pode ser executada na própria conta administrativa'});
-    if(target.role==='admin'&&destructive.includes(action)) return res.status(403).json({error:'Contas administrativas exigem um procedimento de segurança separado'});
+    const destructive=[&#x27;set-disabled&#x27;,&#x27;delete-account&#x27;];
+    if(uid===req.adminIdentity.uid&amp;&amp;destructive.includes(action)) return res.status(400).json({error:&#x27;Esta ação não pode ser executada na própria conta administrativa&#x27;});
+    if(target.role===&#x27;admin&#x27;&amp;&amp;destructive.includes(action)) return res.status(403).json({error:&#x27;Contas administrativas exigem um procedimento de segurança separado&#x27;});
 
-    if(action==='set-disabled'){
+    if(action===&#x27;set-disabled&#x27;){
       const disabled=req.body?.disabled===true;
       await admin.auth().updateUser(uid,{disabled});
-      await db.collection('users').doc(uid).set({banned:disabled,updatedAt:new Date().toISOString()},{merge:true});
-    }else if(action==='revoke-sessions'){
+      await db.collection(&#x27;users&#x27;).doc(uid).set({banned:disabled,updatedAt:new Date().toISOString()},{merge:true});
+    }else if(action===&#x27;revoke-sessions&#x27;){
       await admin.auth().revokeRefreshTokens(uid);
-    }else if(action==='set-email-verified'){
+    }else if(action===&#x27;set-email-verified&#x27;){
       await admin.auth().updateUser(uid,{emailVerified:req.body?.emailVerified===true});
-    }else if(action==='update-profile'){
+    }else if(action===&#x27;update-profile&#x27;){
       const update={};
-      if(typeof req.body?.displayName==='string'&&req.body.displayName.trim()) update.displayName=req.body.displayName.trim().slice(0,100);
-      if(typeof req.body?.email==='string'&&/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email)) update.email=req.body.email.trim().toLowerCase();
-      if(!Object.keys(update).length) return res.status(400).json({error:'Nenhum dado válido para atualizar'});
+      if(typeof req.body?.displayName===&#x27;string&#x27;&amp;&amp;req.body.displayName.trim()) update.displayName=req.body.displayName.trim().slice(0,100);
+      if(typeof req.body?.email===&#x27;string&#x27;&amp;&amp;/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(req.body.email)) update.email=req.body.email.trim().toLowerCase();
+      if(!Object.keys(update).length) return res.status(400).json({error:&#x27;Nenhum dado válido para atualizar&#x27;});
       const changed=await admin.auth().updateUser(uid,update);
-      await db.collection('users').doc(uid).set({...(update.displayName&&{name:update.displayName}),...(update.email&&{email:update.email}),updatedAt:new Date().toISOString()},{merge:true});
-      await writeAdminAudit(req,action,uid,'success',{fields:Object.keys(update)});
+      await db.collection(&#x27;users&#x27;).doc(uid).set({...(update.displayName&amp;&amp;{name:update.displayName}),...(update.email&amp;&amp;{email:update.email}),updatedAt:new Date().toISOString()},{merge:true});
+      await writeAdminAudit(req,action,uid,&#x27;success&#x27;,{fields:Object.keys(update)});
       return res.json({ok:true,user:serializeAuthUser(changed)});
-    }else if(action==='delete-account'){
+    }else if(action===&#x27;delete-account&#x27;){
       await admin.auth().deleteUser(uid);
       if(req.body?.deleteData===true){
-        const ref=db.collection('users').doc(uid);
-        if(typeof db.recursiveDelete==='function') await db.recursiveDelete(ref); else await ref.delete();
+        const ref=db.collection(&#x27;users&#x27;).doc(uid);
+        if(typeof db.recursiveDelete===&#x27;function&#x27;) await db.recursiveDelete(ref); else await ref.delete();
       }
     }else{
-      return res.status(400).json({error:'Ação administrativa inválida'});
+      return res.status(400).json({error:&#x27;Ação administrativa inválida&#x27;});
     }
-    await writeAdminAudit(req,action,uid,'success',{disabled:req.body?.disabled,deleteData:req.body?.deleteData});
+    await writeAdminAudit(req,action,uid,&#x27;success&#x27;,{disabled:req.body?.disabled,deleteData:req.body?.deleteData});
     res.json({ok:true,action,uid});
   }catch(e){
-    logger.error('Admin user action failed:',e);
-    await writeAdminAudit(req,action,uid,'error',{message:e.message});
-    const status=e.code==='auth/user-not-found'?404:e.code==='auth/email-already-exists'?409:500;
-    res.status(status).json({error:e.code==='auth/email-already-exists'?'Este e-mail já pertence a outra conta':'A ação administrativa não pôde ser concluída'});
+    logger.error(&#x27;Admin user action failed:&#x27;,e);
+    await writeAdminAudit(req,action,uid,&#x27;error&#x27;,{message:e.message});
+    const status=e.code===&#x27;auth/user-not-found&#x27;?404:e.code===&#x27;auth/email-already-exists&#x27;?409:500;
+    res.status(status).json({error:e.code===&#x27;auth/email-already-exists&#x27;?&#x27;Este e-mail já pertence a outra conta&#x27;:&#x27;A ação administrativa não pôde ser concluída&#x27;});
   }
 });
 /**
  * Health check
  */
-app.get('/health', handleHealthCheck);
-app.post('/allofy-chat', requireAiUser, aiRateLimiter('allofy'), handleAllofyChat);
-app.get('/allofy-history', requireAiUser, getAllofyHistory);
-app.delete('/allofy-history', requireAiUser, clearAllofyHistory);
-app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }));
+app.get(&#x27;/health&#x27;, handleHealthCheck);
+app.post(&#x27;/allofy-chat&#x27;, requireAiUser, aiRateLimiter(&#x27;allofy&#x27;), handleAllofyChat);
+app.get(&#x27;/allofy-history&#x27;, requireAiUser, getAllofyHistory);
+app.delete(&#x27;/allofy-history&#x27;, requireAiUser, clearAllofyHistory);
+app.get(&#x27;/&#x27;, (req, res) =&gt; res.json({ service: &#x27;Allo API&#x27;, status: &#x27;running&#x27; }));
+
+// ═══════════════════════════════════════════════════
+// NOTIFICAÇÕES PERSONALIZADAS
+// ═══════════════════════════════════════════════════
+
+app.post(&#x27;/notifications/test&#x27;, requireSignedInUser, async (req, res) =&gt; {
+  try {
+    const profile = req.userData || {};
+    if (!profile.pushSubscription || profile.pushEnabled === false) {
+      return res.status(409).json({
+        error: &#x27;Ative as notificações no aplicativo antes de enviar o teste.&#x27;,
+        code: &#x27;push_not_enabled&#x27;,
+      });
+    }
+
+    const sent = await sendPushToProfile(req.userIdentity.uid, profile, {
+      title: &#x27;🔔 Notificações ativadas!&#x27;,
+      body: &#x27;Tudo certo. O Allo Finanças já pode enviar seus resumos e alertas personalizados.&#x27;,
+      tag: &#x27;notification-test&#x27;,
+      url: &#x27;/app?action=open-profile&amp;via=notification&#x27;,
+    });
+
+    if (!sent) return res.status(409).json({ error: &#x27;Não foi possível usar a inscrição de notificações deste aparelho.&#x27; });
+    res.json({ ok: true });
+  } catch (error) {
+    logger.warn(`Teste de push falhou: ${error.message}`);
+    res.status(500).json({ error: &#x27;Não foi possível enviar a notificação de teste.&#x27; });
+  }
+});
+
+async function executeNotificationCycle(source = &#x27;internal&#x27;) {
+  const result = await runNotificationCycle(new Date());
+  logger.info(`🔔 Ciclo de notificações (${source}): ${result.sent} enviada(s), ${result.failures} falha(s), ${result.users} usuário(s).`);
+  return result;
+}
+
+app.post(&#x27;/notifications/run&#x27;, async (req, res) =&gt; {
+  const expected = String(process.env.CRON_SECRET || &#x27;&#x27;).trim();
+  const supplied = String(req.get(&#x27;x-cron-secret&#x27;) || &#x27;&#x27;).trim();
+  if (!expected) return res.status(503).json({ error: &#x27;CRON_SECRET não configurado.&#x27; });
+  const authorized = supplied.length === expected.length &amp;&amp; crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
+  if (!authorized) return res.status(401).json({ error: &#x27;Acesso não autorizado.&#x27; });
+
+  try {
+    res.json({ ok: true, ...(await executeNotificationCycle(&#x27;external&#x27;)) });
+  } catch (error) {
+    logger.error(`Ciclo externo de notificações falhou: ${error.message}`);
+    res.status(500).json({ error: &#x27;Falha ao executar notificações.&#x27; });
+  }
+});
+
+// Funciona enquanto o serviço está ativo. A rota /notifications/run permite
+// que um Cron Job externo acorde o serviço e execute o mesmo ciclo.
+cron.schedule(&#x27;*/15 * * * *&#x27;, () =&gt; {
+  executeNotificationCycle(&#x27;internal&#x27;).catch(error =&gt; {
+    logger.error(`Cron interno de notificações falhou: ${error.message}`);
+  });
+});
 
 // ─────────────────────────────────────────────
 // ERROR HANDLING
 // ─────────────────────────────────────────────
 
-app.use((err, req, res, next) => {
-  logger.error('Unhandled error:', err);
-  res.status(500).json({ error: 'Internal server error' });
+app.use((err, req, res, next) =&gt; {
+  logger.error(&#x27;Unhandled error:&#x27;, err);
+  res.status(500).json({ error: &#x27;Internal server error&#x27; });
 });
 
-app.use((req, res) => {
-  res.status(404).json({ error: 'Route not found' });
+app.use((req, res) =&gt; {
+  res.status(404).json({ error: &#x27;Route not found&#x27; });
 });
 // ─────────────────────────────────────────────
 // ALLO POINTS — APURAÇÃO MENSAL AUTOMÁTICA
@@ -655,22 +732,22 @@ async function apurarRankingMensal(){
     // Só roda no dia 1 de cada mês
     if(now.getDate() !== 1) return;
 
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
 
     // Pega o mês anterior
     const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const monthKey  = prevMonth.getFullYear() + '-' + String(prevMonth.getMonth()+1).padStart(2,'0');
-    const monthLabel = prevMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
+    const monthKey  = prevMonth.getFullYear() + &#x27;-&#x27; + String(prevMonth.getMonth()+1).padStart(2,&#x27;0&#x27;);
+    const monthLabel = prevMonth.toLocaleDateString(&#x27;pt-BR&#x27;, { month: &#x27;long&#x27;, year: &#x27;numeric&#x27; });
 
-    console.log('🏆 Apurando ranking de:', monthKey);
+    console.log(&#x27;🏆 Apurando ranking de:&#x27;, monthKey);
 
     // Busca o líder do mês
-    const rankSnap = await db.collection('ap_ranking').doc(monthKey)
-      .collection('users').orderBy('points', 'desc').limit(1).get();
+    const rankSnap = await db.collection(&#x27;ap_ranking&#x27;).doc(monthKey)
+      .collection(&#x27;users&#x27;).orderBy(&#x27;points&#x27;, &#x27;desc&#x27;).limit(1).get();
 
     if(rankSnap.empty){
-      console.log('Nenhum participante no ranking de', monthKey);
+      console.log(&#x27;Nenhum participante no ranking de&#x27;, monthKey);
       return;
     }
 
@@ -678,42 +755,42 @@ async function apurarRankingMensal(){
     const winnerId = winner.id;
     const winnerData = winner.data();
     const winnerPts  = winnerData.points || 0;
-    const winnerName = winnerData.name || 'Usuário';
+    const winnerName = winnerData.name || &#x27;Usuário&#x27;;
 
-    console.log('🥇 Vencedor:', winnerName, 'com', winnerPts, 'pts');
+    console.log(&#x27;🥇 Vencedor:&#x27;, winnerName, &#x27;com&#x27;, winnerPts, &#x27;pts&#x27;);
 
     // Ativa 1 mês de PRO grátis para o vencedor
     const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await db.collection('users').doc(winnerId).set({
+    await db.collection(&#x27;users&#x27;).doc(winnerId).set({
       isPro: true,
-      proPlan: 'monthly',
+      proPlan: &#x27;monthly&#x27;,
       proSince: now.toISOString(),
       proExpiresAt: expiresAt,
       proCancelled: false,
-      proAwardedBy: 'ranking',
+      proAwardedBy: &#x27;ranking&#x27;,
       proAwardMonth: monthKey
     }, { merge: true });
 
     // Salva o resultado no Firestore para histórico
-    await db.collection('ap_ranking').doc(monthKey).set({
+    await db.collection(&#x27;ap_ranking&#x27;).doc(monthKey).set({
       winner: { id: winnerId, name: winnerName, points: winnerPts },
       apuratedAt: new Date().toISOString(),
-      prize: '1 mês PRO grátis'
+      prize: &#x27;1 mês PRO grátis&#x27;
     }, { merge: true });
 
     // Envia notificação pelo sistema de mensagens do admin
-    await db.collection('admin_messages').add({
-      target: 'all',
-      type: 'success',
-      title: '🏆 Campeão do mês de ' + monthLabel + '!',
-      body: winnerName + ' venceu o ranking com ' + winnerPts.toLocaleString('pt-BR') + ' Allo Points e ganhou 1 mês PRO grátis! Parabéns! 🎉',
+    await db.collection(&#x27;admin_messages&#x27;).add({
+      target: &#x27;all&#x27;,
+      type: &#x27;success&#x27;,
+      title: &#x27;🏆 Campeão do mês de &#x27; + monthLabel + &#x27;!&#x27;,
+      body: winnerName + &#x27; venceu o ranking com &#x27; + winnerPts.toLocaleString(&#x27;pt-BR&#x27;) + &#x27; Allo Points e ganhou 1 mês PRO grátis! Parabéns! 🎉&#x27;,
       createdAt: new Date(),
-      createdBy: 'sistema'
+      createdBy: &#x27;sistema&#x27;
     });
 
-    console.log('✅ PRO ativado para o vencedor:', winnerName);
+    console.log(&#x27;✅ PRO ativado para o vencedor:&#x27;, winnerName);
   } catch(e){
-    console.error('apurarRankingMensal error:', e);
+    console.error(&#x27;apurarRankingMensal error:&#x27;, e);
   }
 }
 
@@ -733,16 +810,16 @@ async function bonusSaldoPositivo(){
     const isLastDay = tomorrow.getMonth() !== now.getMonth();
     if(!isLastDay) return;
 
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
 
     // Mês atual no formato YYYY-MM
-    const monthKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
+    const monthKey = now.getFullYear() + &#x27;-&#x27; + String(now.getMonth()+1).padStart(2,&#x27;0&#x27;);
 
-    console.log('💰 Verificando saldo positivo do mês:', monthKey);
+    console.log(&#x27;💰 Verificando saldo positivo do mês:&#x27;, monthKey);
 
     // Busca todos os usuários
-    const usersSnap = await db.collection('users').get();
+    const usersSnap = await db.collection(&#x27;users&#x27;).get();
 
     let count = 0;
     for(const userDoc of usersSnap.docs){
@@ -751,77 +828,77 @@ async function bonusSaldoPositivo(){
         const userId   = userDoc.id;
 
         // Pega transações do mês atual
-        const txSnap = await db.collection('users').doc(userId)
-          .collection('transactions')
-          .where('date', '>=', monthKey + '-01')
-          .where('date', '<=', monthKey + '-31')
-          .get().catch(() => null);
+        const txSnap = await db.collection(&#x27;users&#x27;).doc(userId)
+          .collection(&#x27;transactions&#x27;)
+          .where(&#x27;date&#x27;, &#x27;&gt;=&#x27;, monthKey + &#x27;-01&#x27;)
+          .where(&#x27;date&#x27;, &#x27;&lt;=&#x27;, monthKey + &#x27;-31&#x27;)
+          .get().catch(() =&gt; null);
 
         // Se não tem subcoleção de transações, tenta pelo campo no documento
         let receitas = 0;
         let despesas = 0;
 
-        if(txSnap && !txSnap.empty){
-          txSnap.docs.forEach(d => {
+        if(txSnap &amp;&amp; !txSnap.empty){
+          txSnap.docs.forEach(d =&gt; {
             const tx = d.data();
-            if(tx.type === 'income') receitas += tx.amount || 0;
-            if(tx.type === 'expense') despesas += tx.amount || 0;
+            if(tx.type === &#x27;income&#x27;) receitas += tx.amount || 0;
+            if(tx.type === &#x27;expense&#x27;) despesas += tx.amount || 0;
           });
         } else {
           // Transações salvas no documento do usuário (estrutura atual do app)
           const transactions = userData.transactions || [];
-          transactions.forEach(tx => {
-            if((tx.date || '').startsWith(monthKey)){
-              if(tx.type === 'income') receitas += tx.amount || 0;
-              if(tx.type === 'expense') despesas += tx.amount || 0;
+          transactions.forEach(tx =&gt; {
+            if((tx.date || &#x27;&#x27;).startsWith(monthKey)){
+              if(tx.type === &#x27;income&#x27;) receitas += tx.amount || 0;
+              if(tx.type === &#x27;expense&#x27;) despesas += tx.amount || 0;
             }
           });
         }
 
         // Verifica se saldo é positivo
-        if(receitas > 0 && receitas > despesas){
+        if(receitas &gt; 0 &amp;&amp; receitas &gt; despesas){
           // Verifica se já ganhou bônus este mês
-          const jaGanhou = userData['apBonus_' + monthKey];
+          const jaGanhou = userData[&#x27;apBonus_&#x27; + monthKey];
           if(jaGanhou) continue;
 
           // Adiciona +200 pts
           const currentPts = userData.alloPoints || 0;
-          await db.collection('users').doc(userId).set({
+          await db.collection(&#x27;users&#x27;).doc(userId).set({
             alloPoints: currentPts + 200,
-            ['apBonus_' + monthKey]: true
+            [&#x27;apBonus_&#x27; + monthKey]: true
           }, { merge: true });
 
           // Histórico
-          await db.collection('users').doc(userId)
-            .collection('ap_history').add({
-              type: 'positive_month',
-              description: 'Mês com saldo positivo! 💰',
+          await db.collection(&#x27;users&#x27;).doc(userId)
+            .collection(&#x27;ap_history&#x27;).add({
+              type: &#x27;positive_month&#x27;,
+              description: &#x27;Mês com saldo positivo! 💰&#x27;,
               points: 200,
               createdAt: new Date()
             });
 
           // Ranking do mês
-          const rankRef = db.collection('ap_ranking').doc(monthKey)
-            .collection('users').doc(userId);
-          const rankDoc = await rankRef.get().catch(() => null);
+          const rankRef = db.collection(&#x27;ap_ranking&#x27;).doc(monthKey)
+            .collection(&#x27;users&#x27;).doc(userId);
+          const rankDoc = await rankRef.get().catch(() =&gt; null);
           const currentRankPts = rankDoc?.exists ? (rankDoc.data()?.points || 0) : 0;
           await rankRef.set({
             points: currentRankPts + 200,
-            name: userData.name || 'Usuário',
+            name: userData.name || &#x27;Usuário&#x27;,
             updatedAt: new Date()
           }, { merge: true });
 
           count++;
-          console.log('✅ +200 pts para:', userData.name || userId);
+          console.log(&#x27;✅ +200 pts para:&#x27;, userData.name || userId);
         }
       } catch(e){
-        console.warn('bonusSaldoPositivo user error:', e);
+        console.warn(&#x27;bonusSaldoPositivo user error:&#x27;, e);
       }
     }
 
-    console.log('💰 Bônus saldo positivo aplicado para', count, 'usuários');
+    console.log(&#x27;💰 Bônus saldo positivo aplicado para&#x27;, count, &#x27;usuários&#x27;);
   } catch(e){
-    console.error('bonusSaldoPositivo error:', e);
+    console.error(&#x27;bonusSaldoPositivo error:&#x27;, e);
   }
 }
 
@@ -833,10 +910,10 @@ setInterval(bonusSaldoPositivo, 24 * 60 * 60 * 1000);
 // ─────────────────────────────────────────────
 async function checkProExpirations(){
   try {
-    const { getDb } = require('./config/firebase');
+    const { getDb } = require(&#x27;./config/firebase&#x27;);
     const db = getDb();
     const now = new Date();
-    const snap = await db.collection('users').where('isPro','==',true).get();
+    const snap = await db.collection(&#x27;users&#x27;).where(&#x27;isPro&#x27;,&#x27;==&#x27;,true).get();
 
     for(const doc of snap.docs){
       const data = doc.data();
@@ -846,25 +923,25 @@ async function checkProExpirations(){
       const daysLeft = Math.ceil((expiresAt - now) / (1000*60*60*24));
 
       // Desativa se expirou
-      if(daysLeft <= 0){
-        await db.collection('users').doc(doc.id).set({
+      if(daysLeft &lt;= 0){
+        await db.collection(&#x27;users&#x27;).doc(doc.id).set({
           isPro: false,
           proExpired: true,
           proExpiredAt: now.toISOString()
         }, { merge: true });
-        console.log('❌ PRO expirado para:', doc.id);
+        console.log(&#x27;❌ PRO expirado para:&#x27;, doc.id);
         continue;
       }
 
       // Salva dias restantes para o app exibir
-      await db.collection('users').doc(doc.id).set({
+      await db.collection(&#x27;users&#x27;).doc(doc.id).set({
         proDaysLeft: daysLeft
       }, { merge: true });
 
-      console.log('⏳ PRO:', doc.id, '- dias restantes:', daysLeft);
+      console.log(&#x27;⏳ PRO:&#x27;, doc.id, &#x27;- dias restantes:&#x27;, daysLeft);
     }
   } catch(e){
-    console.error('checkProExpirations error:', e);
+    console.error(&#x27;checkProExpirations error:&#x27;, e);
   }
 }
 
@@ -872,82 +949,40 @@ async function checkProExpirations(){
 checkProExpirations();
 setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 
-// ═══════════════════════════════════════════════════
-// NOTIFICAÇÕES PERSONALIZADAS
-// ═══════════════════════════════════════════════════
-
-app.post('/notifications/test', requireSignedInUser, async (req, res) => {
-  try {
-    const profile = req.userData || {};
-    if (!profile.pushSubscription || profile.pushEnabled === false) {
-      return res.status(409).json({
-        error: 'Ative as notificações no aplicativo antes de enviar o teste.',
-        code: 'push_not_enabled',
-      });
-    }
-
-    const sent = await sendPushToProfile(req.userIdentity.uid, profile, {
-      title: '🔔 Notificações ativadas!',
-      body: 'Tudo certo. O Allo Finanças já pode enviar seus resumos e alertas personalizados.',
-      tag: 'notification-test',
-      url: '/app?action=open-profile&via=notification',
-    });
-
-    if (!sent) return res.status(409).json({ error: 'Não foi possível usar a inscrição de notificações deste aparelho.' });
-    res.json({ ok: true });
-  } catch (error) {
-    logger.warn(`Teste de push falhou: ${error.message}`);
-    res.status(500).json({ error: 'Não foi possível enviar a notificação de teste.' });
-  }
-});
-
-async function executeNotificationCycle(source = 'internal') {
-  const result = await runNotificationCycle(new Date());
-  logger.info(`🔔 Ciclo de notificações (${source}): ${result.sent} enviada(s), ${result.failures} falha(s), ${result.users} usuário(s).`);
-  return result;
-}
-
-app.post('/notifications/run', async (req, res) => {
-  const expected = String(process.env.CRON_SECRET || '').trim();
-  const supplied = String(req.get('x-cron-secret') || '').trim();
-  if (!expected) return res.status(503).json({ error: 'CRON_SECRET não configurado.' });
-  const authorized = supplied.length === expected.length && crypto.timingSafeEqual(Buffer.from(supplied), Buffer.from(expected));
-  if (!authorized) return res.status(401).json({ error: 'Acesso não autorizado.' });
-
-  try {
-    res.json({ ok: true, ...(await executeNotificationCycle('external')) });
-  } catch (error) {
-    logger.error(`Ciclo externo de notificações falhou: ${error.message}`);
-    res.status(500).json({ error: 'Falha ao executar notificações.' });
-  }
-});
-
-// Funciona enquanto o serviço está ativo. A rota /notifications/run permite
-// que um Cron Job externo acorde o serviço e execute o mesmo ciclo.
-cron.schedule('*/15 * * * *', () => {
-  executeNotificationCycle('internal').catch(error => {
-    logger.error(`Cron interno de notificações falhou: ${error.message}`);
-  });
-});
-
 // ─────────────────────────────────────────────
 // START
 // ─────────────────────────────────────────────
 
-app.listen(PORT, () => {
+app.listen(PORT, () =&gt; {
   logger.info(`🚀 Allo API running on port ${PORT}`);
-  logger.info(`🌍 Environment: ${process.env.NODE_ENV || 'development'}`);
-  logger.info('🔔 Agendador de notificações ativo (a cada 15 minutos).');
+  logger.info(`🌍 Environment: ${process.env.NODE_ENV || &#x27;development&#x27;}`);
+  logger.info(&#x27;🔔 Agendador de notificações ativo (a cada 15 minutos).&#x27;);
 });
 
 // Graceful shutdown
-process.on('SIGTERM', () => {
-  logger.info('SIGTERM received — shutting down gracefully');
+process.on(&#x27;SIGTERM&#x27;, () =&gt; {
+  logger.info(&#x27;SIGTERM received — shutting down gracefully&#x27;);
   process.exit(0);
 });
 
-process.on('unhandledRejection', (reason) => {
-  logger.error('Unhandled Rejection:', reason);
+process.on(&#x27;unhandledRejection&#x27;, (reason) =&gt; {
+  logger.error(&#x27;Unhandled Rejection:&#x27;, reason);
 });
 
 module.exports = app;
+</pre>
+<script>
+async function copyCode(){
+  const text = document.getElementById('code').innerText;
+  try {
+    await navigator.clipboard.writeText(text);
+    document.getElementById('status').textContent='✅ Código completo copiado. Agora cole no src/server.js do GitHub.';
+  } catch(e) {
+    const r=document.createRange(); r.selectNodeContents(document.getElementById('code'));
+    const s=window.getSelection(); s.removeAllRanges(); s.addRange(r);
+    document.getElementById('status').textContent='Selecione e copie o texto destacado.';
+  }
+}
+</script>
+</body>
+</html>
