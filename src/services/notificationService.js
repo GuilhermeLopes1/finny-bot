@@ -9,6 +9,94 @@ function pushClient() {
   return require('web-push');
 }
 
+
+function messagingClient() {
+  return require('../config/firebase').admin.messaging();
+}
+
+function nativeDeviceEntries(profile = {}) {
+  const devices = profile && typeof profile.fcmDevices === 'object' && !Array.isArray(profile.fcmDevices)
+    ? profile.fcmDevices
+    : {};
+  return Object.entries(devices)
+    .map(([installId, value]) => ({
+      installId,
+      token: String(value?.token || '').trim(),
+      platform: String(value?.platform || 'android'),
+    }))
+    .filter(item => item.token.length >= 50 && item.token.length <= 4096 && !/\s/.test(item.token));
+}
+
+function hasNotificationTarget(profile = {}) {
+  return nativeDeviceEntries(profile).length > 0 || Boolean(profile.pushSubscription);
+}
+
+function invalidFcmCode(code = '') {
+  return [
+    'messaging/registration-token-not-registered',
+    'messaging/invalid-registration-token',
+  ].includes(String(code));
+}
+
+async function clearInvalidNativeDevices(userId, profile = {}, invalidTokens = []) {
+  if (!invalidTokens.length) return;
+  const invalid = new Set(invalidTokens);
+  const current = profile && typeof profile.fcmDevices === 'object' && !Array.isArray(profile.fcmDevices)
+    ? profile.fcmDevices
+    : {};
+  const next = {};
+  for (const [installId, value] of Object.entries(current)) {
+    if (!invalid.has(String(value?.token || '').trim())) next[installId] = value;
+  }
+  await database().collection('users').doc(userId).set({
+    fcmDevices: next,
+    fcmUpdatedAt: new Date().toISOString(),
+  }, { merge: true });
+  profile.fcmDevices = next;
+}
+
+async function sendNativeToProfile(userId, profile, notification) {
+  const entries = nativeDeviceEntries(profile);
+  if (!entries.length) return false;
+
+  const tokens = entries.slice(0, 500).map(item => item.token);
+  const tag = String(notification.tag || 'allofinancas').slice(0, 120);
+  const url = String(notification.url || '/app');
+  const title = String(notification.title || 'Allo Finanças');
+  const body = String(notification.body || '');
+
+  const response = await messagingClient().sendEachForMulticast({
+    tokens,
+    notification: { title, body },
+    data: {
+      title,
+      body,
+      url,
+      tag,
+      source: 'allo-financas',
+    },
+    android: {
+      priority: 'high',
+      notification: {
+        channelId: 'allo_financas_alerts',
+        icon: 'ic_notification_icon',
+        color: '#6C63FF',
+        sound: 'default',
+        tag,
+        clickAction: 'com.allofinancas.OPEN_NOTIFICATION',
+      },
+    },
+  });
+
+  const invalidTokens = [];
+  response.responses.forEach((item, index) => {
+    if (!item.success && invalidFcmCode(item.error?.code)) invalidTokens.push(tokens[index]);
+  });
+  if (invalidTokens.length) await clearInvalidNativeDevices(userId, profile, invalidTokens);
+
+  return response.successCount > 0;
+}
+
 const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
   enabled: false,
   dailySummary: true,
@@ -271,12 +359,28 @@ async function clearInvalidSubscription(userId, profile = {}) {
 }
 
 async function sendPushToProfile(userId, profile, notification) {
-  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
-    throw new Error('VAPID não configurado no servidor.');
-  }
-  if (!profile.pushSubscription) return false;
   const preferences = normalizeNotificationPreferences(profile.notificationPreferences);
   if (!preferences.enabled || profile.pushEnabled === false) return false;
+
+  let nativeError = null;
+  if (nativeDeviceEntries(profile).length) {
+    try {
+      const nativeSent = await sendNativeToProfile(userId, profile, notification);
+      if (nativeSent) return true;
+    } catch (error) {
+      nativeError = error;
+      console.warn(`FCM nativo falhou (${userId}):`, error.message);
+    }
+  }
+
+  if (!profile.pushSubscription) {
+    if (nativeError) throw nativeError;
+    return false;
+  }
+  if (!process.env.VAPID_PUBLIC_KEY || !process.env.VAPID_PRIVATE_KEY) {
+    if (nativeError) throw nativeError;
+    throw new Error('VAPID não configurado no servidor.');
+  }
 
   let subscription;
   try {
@@ -315,7 +419,7 @@ async function sendOnce(userId, profile, key, notification, now = new Date()) {
 
 async function processUserNotifications(userId, profile, now = new Date()) {
   const preferences = normalizeNotificationPreferences(profile.notificationPreferences);
-  if (!preferences.enabled || profile.pushEnabled === false || !profile.pushSubscription) return 0;
+  if (!preferences.enabled || profile.pushEnabled === false || !hasNotificationTarget(profile)) return 0;
 
   const local = localParts(now, preferences.timezone);
   const timeReached = notificationTimeReached(preferences, now);
@@ -396,4 +500,7 @@ module.exports = {
   processUserNotifications,
   runNotificationCycle,
   sendPushToProfile,
+  sendNativeToProfile,
+  nativeDeviceEntries,
+  hasNotificationTarget,
 };
