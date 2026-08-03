@@ -23,7 +23,10 @@ const crypto = require('crypto');
 require('./config/firebase');
 const { handleHealthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
-const { handleAllofyChat } = require('./controllers/allofyController');
+const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require('./controllers/allofyController');
+const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiController');
+const { requireFirebaseUser } = require('./middleware/firebaseAuth');
+const { aiRateLimiter } = require('./middleware/aiRateLimiter');
 
 // ─────────────────────────────────────────────
 // INIT
@@ -38,7 +41,17 @@ const PORT = process.env.PORT || 3000;
 // MIDDLEWARE
 // ─────────────────────────────────────────────
 
-app.use(cors());
+const configuredOrigins = String(process.env.ALLOWED_ORIGINS || 'https://allofinancas.com,https://www.allofinancas.com')
+  .split(',').map(x => x.trim()).filter(Boolean);
+if (process.env.NODE_ENV !== 'production') configuredOrigins.push('http://localhost:3000', 'http://127.0.0.1:5500');
+app.use(cors({
+  origin(origin, callback) {
+    if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
+    return callback(new Error('Origem não autorizada pelo CORS'));
+  },
+  allowedHeaders: ['Content-Type', 'Authorization'],
+  methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
+}));
 app.use(express.json({ limit: '10mb' }));
 app.use(express.urlencoded({ extended: true, limit: '10mb' }));
 app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) } }));
@@ -53,33 +66,8 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) }
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
-app.post('/import-pdf', upload.single('file'), async (req, res) => {
-  try {
-    if (!req.file) return res.status(400).json({ error: 'Nenhum arquivo enviado' });
-
-    const pdfParse = require('pdf-parse');
-    const data = await pdfParse(req.file.buffer);
-    const text = data.text || '';
-
-    if (!text.trim()) return res.status(400).json({ error: 'PDF sem texto legível' });
-
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    const ano = new Date().getFullYear();
-    const prompt = 'Analise este texto de fatura bancaria brasileira. RETORNE APENAS JSON PURO:\n{"transactions":[{"desc":"descricao","amount":0.00,"type":"expense","date":"' + ano + '-MM-DD"}]}\n\nExtraia todos os itens que tenham: data no formato DD/MM + texto descritivo + valor numerico.\nExemplos do que extrair:\n10/04 PAG BOLETO BANCARIO 146,88 -> income\n28/04 CUSTO TRANS EXTERIOR IOF 6,13 -> expense\n27/04 ANUIDADE DIFERENCIADA 33,00 -> expense\n27/04 CREAO AI LIMITED 70,61 -> expense\n\nSe nao encontrar lancamentos com data+descricao+valor, retorne {"transactions":[{"desc":"Lancamento fatura","amount":253.75,"type":"expense","date":"' + ano + '-04-28"}]}\n\nTexto:\n' + text;
-const message = await client.messages.create({
-      model: 'claude-opus-4-6',
-      max_tokens: 2000,
-      messages: [{ role: 'user', content: prompt }]
-    });
-
-    res.json({ text: message.content?.[0]?.text || '' });
-  } catch (e) {
-    console.error('PDF import error:', e);
-    res.status(500).json({ error: e.message || 'Erro ao processar PDF' });
-  }
-});
+const requireAiUser = requireFirebaseUser({ requirePro: true });
+app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
 
 // ─────────────────────────────────────────────
 // ─────────────────────────────────────────────
@@ -465,43 +453,7 @@ app.post('/webhook-mp', async (req, res) => {
 // ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
-app.post('/ai-analysis', async (req, res) => {
-  try {
-    const { prompt, image, imageType } = req.body;
-    if (!prompt) return res.status(400).json({ error: 'Prompt obrigatório' });
-
-    const Anthropic = require('@anthropic-ai/sdk');
-    const client = new Anthropic({ apiKey: process.env.ANTHROPIC_API_KEY });
-
-    let content;
-    if (image) {
-      content = [
-        {
-          type: 'image',
-          source: {
-            type: 'base64',
-            media_type: imageType || 'image/jpeg',
-            data: image
-          }
-        },
-        { type: 'text', text: prompt }
-      ];
-    } else {
-      content = prompt;
-    }
-
-    const message = await client.messages.create({
-  model: image ? 'claude-haiku-4-5-20251001' : 'claude-haiku-4-5-20251001',
-  max_tokens: 2000,
-  messages: [{ role: 'user', content }]
-});
-
-    res.json({ text: message.content?.[0]?.text || '' });
-  } catch (e) {
-    console.error('AI error:', e);
-    res.status(500).json({ error: e.message || 'Erro ao consultar IA' });
-  }
-});
+app.post('/ai-analysis', requireAiUser, aiRateLimiter('analysis'), handleAiAnalysis);
 
 // Indicação processada no servidor para impedir concessão de plano pelo cliente.
 app.post('/apply-referral', async (req, res) => {
@@ -675,7 +627,9 @@ app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
  * Health check
  */
 app.get('/health', handleHealthCheck);
-app.post('/allofy-chat', handleAllofyChat);
+app.post('/allofy-chat', requireAiUser, aiRateLimiter('allofy'), handleAllofyChat);
+app.get('/allofy-history', requireAiUser, getAllofyHistory);
+app.delete('/allofy-history', requireAiUser, clearAllofyHistory);
 app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }));
 
 // ─────────────────────────────────────────────
