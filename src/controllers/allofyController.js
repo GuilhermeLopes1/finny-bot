@@ -2,6 +2,7 @@ const { getDb, admin } = require('../config/firebase');
 const { createResponse, outputText } = require('../config/openai');
 const { tools, executeAllofyTool } = require('../services/allofyTools');
 const logger = require('../utils/logger');
+const { cleanAllofyFormatting } = require('../utils/textFormatting');
 
 const INSTRUCTIONS = `Você é o Allofy, assistente inteligente do aplicativo Allo Finanças.
 Responda sempre em português brasileiro, com clareza, objetividade e linguagem adequada para celular.
@@ -18,6 +19,9 @@ REGRAS DE DADOS — OBRIGATÓRIAS:
 - Em resumos de gastos, não conte transferências entre contas, despesas cobertas por benefício nem pagamento de fatura como um novo gasto, pois isso geraria dupla contagem. Compras do cartão já representam o gasto.
 - Separe pago, pendente, parcial e cancelado. Pendências não entram no saldo realizado, mas devem ser apresentadas separadamente quando forem relevantes.
 - Para pedidos amplos como “quero um resumo do mês atual”, use get_financial_overview com period='month'. Apresente primeiro receitas realizadas, despesas realizadas e saldo; depois mostre obrigatoriamente as pendências do período, sua quantidade, os principais itens e o saldo projetado após elas.
+- Quando o usuário disser “resumo completo”, “resumo detalhado”, “tudo do mês” ou pedir separação entre Gui e Luh, use suggestedCompleteByAccountResponse como base e confira os campos commitments.byAccount, byAccount e pendingByAccount. Inclua faturas de cartão em aberto, parcelas de dívidas do mês e saldo devedor das dívidas ativas.
+- Faturas abertas são compromissos de pagamento e devem aparecer no resumo completo, mas não podem ser somadas novamente como despesa quando as compras do cartão já foram contabilizadas.
+- Dívidas cadastradas devem aparecer no resumo completo mesmo que a parcela ainda não tenha virado uma transação. Mostre a parcela aberta do mês e o saldo devedor.
 - get_financial_overview devolve pendingItems, pendingByAccount e suggestedResponse. Use esses campos. Nunca diga “pendências não separadas por conta” ou “não foi possível identificar a conta” sem antes verificar pendingByAccount e pendingItems.
 - Em um resumo geral, não crie uma seção para cada conta sem o usuário pedir. Não liste contas sem movimentação. Não explique exclusões técnicas como transferências ou pagamento de fatura, a menos que isso seja necessário para esclarecer um valor ou que o usuário pergunte.
 - Quando listar uma pendência, informe descrição, valor, data e conta vinculada. Se não houver conta vinculada no registro, diga somente “Sem conta vinculada”.
@@ -32,6 +36,8 @@ REGRAS DE RESPOSTA:
 - Você pode responder dúvidas gerais estáveis. Para fatos atuais que não consegue verificar, diga isso com transparência.
 - Salve memória somente quando o usuário pedir explicitamente para lembrar uma preferência não sensível. Nunca memorize senha, token, CVV ou número completo de cartão.
 - Seja objetivo; use listas curtas quando melhorarem a leitura. Não use tabelas longas.
+- A interface do Allofy exibe texto puro. Não use Markdown. Não use #, ##, **, __, linhas com --- nem asteriscos decorativos.
+- Para organizar, use títulos simples em letras maiúsculas, linhas em branco e o marcador •. Use no máximo um emoji por seção quando realmente ajudar.
 - Em resumos financeiros gerais, prefira esta estrutura: título do período; bloco “Realizado”; bloco “Pendências”; saldo projetado; no máximo um destaque final útil.
 - Se a ferramenta devolver suggestedResponse, use-o como base factual e melhore apenas a redação, sem remover pendências ou trocar os valores.
 - Se faltarem dados, diga exatamente o que falta e em qual área do app cadastrar.`;
@@ -57,7 +63,7 @@ async function runAllofy(uid, profile, message, history) {
   const input = [
     ...history.map(item => ({
       role: item.role === 'assistant' ? 'assistant' : 'user',
-      content: String(item.content).slice(0, 7000),
+      content: (item.role === 'assistant' ? cleanAllofyFormatting(item.content) : String(item.content)).slice(0, 7000),
     })),
     { role: 'user', content: message },
   ];
@@ -73,7 +79,7 @@ async function runAllofy(uid, profile, message, history) {
 
   for (let round = 0; round < 8; round += 1) {
     const calls = (response.output || []).filter(item => item.type === 'function_call');
-    if (!calls.length) return outputText(response);
+    if (!calls.length) return cleanAllofyFormatting(outputText(response));
 
     input.push(...(response.output || []));
     for (const call of calls) {
@@ -131,7 +137,7 @@ async function handleAllofyChat(req, res) {
 async function getAllofyHistory(req, res) {
   try {
     const items = await loadHistory(req.userIdentity.uid, 30);
-    res.json({ messages: items.map(item => ({ role: item.role, content: item.content })) });
+    res.json({ messages: items.map(item => ({ role: item.role, content: item.role === 'assistant' ? cleanAllofyFormatting(item.content) : item.content })) });
   } catch (error) {
     logger.error(`Allofy history error: ${error.message}`);
     res.status(500).json({ error: 'Não foi possível carregar a conversa.' });
@@ -157,4 +163,4 @@ async function clearAllofyHistory(req, res) {
   }
 }
 
-module.exports = { handleAllofyChat, getAllofyHistory, clearAllofyHistory, runAllofy };
+module.exports = { handleAllofyChat, getAllofyHistory, clearAllofyHistory, runAllofy, cleanAllofyFormatting };
