@@ -203,16 +203,16 @@ test('resumo completo inclui faturas abertas e parcelas de dívidas do mês', ()
   assert.equal(overview.commitments.totals.activeDebtBalance, 8000);
   assert.equal(overview.commitments.openCardInvoices.length, 2);
   assert.equal(overview.commitments.openDebts.length, 1);
-  const luh = overview.commitments.byAccount.find(item => item.name === 'Nubank Luh');
-  const gui = overview.commitments.byAccount.find(item => item.name === 'Nubank Gui');
+  const luh = overview.commitments.byOwner.find(item => item.label === 'Luh');
+  const gui = overview.commitments.byOwner.find(item => item.label === 'Gui');
   assert.equal(luh.cardInvoicesOpen, 807.22);
   assert.equal(luh.debtInstallmentsOpen, 500);
   assert.equal(gui.cardInvoicesOpen, 4507.73);
-  assert.match(overview.suggestedCompleteResponse, /FATURAS DE CARTÃO EM ABERTO/);
-  assert.match(overview.suggestedCompleteResponse, /DÍVIDAS E FINANCIAMENTOS/);
+  assert.match(overview.suggestedCompleteResponse, /Faturas de cartão em aberto/);
+  assert.match(overview.suggestedCompleteResponse, /Dívidas e financiamentos/);
   assert.match(overview.suggestedCompleteResponse, /Bradesco Luh/);
-  assert.match(overview.suggestedCompleteByAccountResponse, /NUBANK LUH/);
-  assert.match(overview.suggestedCompleteByAccountResponse, /NUBANK GUI/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /LUH/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /GUI/);
   assert.match(overview.suggestedCompleteByAccountResponse, /Faturas abertas:/);
   assert.match(overview.suggestedCompleteByAccountResponse, /Dívidas e financiamentos:/);
   assert.doesNotMatch(overview.suggestedCompleteResponse, /\*\*|^#/m);
@@ -229,4 +229,80 @@ test('dívida paga no mês não deixa parcela aberta novamente', () => {
   const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
   assert.equal(overview.commitments.openDebts[0].installmentOpen, 0);
   assert.equal(overview.commitments.totals.debtInstallmentsOpen, 0);
+});
+
+
+test('resumo executivo inclui saldos bancários e agrupa cartões por proprietário no nome', () => {
+  const profile = {
+    banks: [
+      { id: 'luh', name: 'Nubank', accountName: 'Nubank Luh', balance: 34.50 },
+      { id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 0.77 },
+    ],
+    cards: [
+      { id: 'c1', name: 'Caixa Gui', due: 22, invoiceOverrides: { '2026-08': { amount: 2570.57 } } },
+      { id: 'c2', name: 'Bradesco Luh', due: 25, invoiceOverrides: { '2026-08': { amount: 303 } } },
+      { id: 'c3', name: 'BrasilCard Gui', due: 25, invoiceOverrides: { '2026-08': { amount: 111.44 } } },
+    ],
+    transactions: [],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.accountSnapshot.totalBalance, 35.27);
+  const gui = overview.commitments.byOwner.find(item => item.label === 'Gui');
+  const luh = overview.commitments.byOwner.find(item => item.label === 'Luh');
+  assert.equal(gui.cardInvoicesOpen, 2682.01);
+  assert.equal(luh.cardInvoicesOpen, 303);
+  assert.equal(overview.dataQuality.unassignedCommitments, 0);
+  assert.match(overview.suggestedExecutiveResponse, /Disponível agora nas contas: R\$\s*35,27/);
+  assert.match(overview.suggestedExecutiveResponse, /GUI/);
+  assert.match(overview.suggestedExecutiveResponse, /Caixa Gui/);
+  assert.doesNotMatch(overview.suggestedExecutiveResponse, /SEM CONTA VINCULADA/);
+});
+
+test('necessidade de caixa não soma compra pendente do cartão novamente com a fatura', () => {
+  const profile = {
+    banks: [{ id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 100 }],
+    cards: [{ id: 'card-gui', name: 'Nubank Gui', due: 22, invoiceOverrides: { '2026-08': { amount: 200 } } }],
+    cardTransactions: [
+      { id: 'p1', descricao: 'Mercado', valorTotal: 200, dataCompra: '2026-08-02', cardId: 'card-gui', status: 'pending' },
+    ],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.pendingExpenses, 200);
+  assert.equal(overview.commitmentAnalysis.directPendingExpenses, 0);
+  assert.equal(overview.commitmentAnalysis.overlappedPendingExpenses, 200);
+  assert.equal(overview.commitmentAnalysis.uniqueCashOutflow, 200);
+  assert.equal(overview.commitmentAnalysis.projectedWithoutPendingIncome, -100);
+  assert.equal(overview.commitmentAnalysis.shortfallNow, 100);
+});
+
+test('resumo executivo usa apenas a parcela mensal e não o saldo devedor inteiro na necessidade de caixa', () => {
+  const profile = {
+    banks: [{ id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 600 }],
+    debts: [{ id: 'd1', name: 'Financiamento Gui', total: 10000, paid: 1000, installment: 500, dueDay: 7, status: 'pending' }],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.commitments.totals.activeDebtBalance, 9000);
+  assert.equal(overview.commitmentAnalysis.uniqueCashOutflow, 500);
+  assert.equal(overview.commitmentAnalysis.projectedWithoutPendingIncome, 100);
+  assert.match(overview.suggestedExecutiveResponse, /Saldo devedor total: R\$\s*9\.000,00/);
+  assert.match(overview.suggestedExecutiveResponse, /Margem disponível hoje: R\$\s*100,00/);
+});
+
+
+test('dívida herda proprietário do último pagamento registrado nas transações', () => {
+  const profile = {
+    banks: [
+      { id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 0 },
+      { id: 'luh', name: 'Nubank', accountName: 'Nubank Luh', balance: 0 },
+    ],
+    debts: [{ id: 'gol', name: 'Financiamento Gol 2018', total: 10000, paid: 1000, installment: 500, dueDay: 7, status: 'pending' }],
+    transactions: [
+      { id: 'old', description: 'Parcela: Financiamento Gol 2018', amount: 500, type: 'expense', date: '2026-07-07', bankId: 'gui', status: 'paid' },
+    ],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  const gui = overview.commitments.byOwner.find(item => item.label === 'Gui');
+  assert.equal(gui.debts.length, 1);
+  assert.equal(gui.debts[0].name, 'Financiamento Gol 2018');
+  assert.equal(overview.dataQuality.unassignedCommitments, 0);
 });
