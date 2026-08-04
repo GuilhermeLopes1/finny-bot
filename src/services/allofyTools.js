@@ -228,12 +228,23 @@ function buildLookup(profile = {}) {
   const bankSearch = [];
   for (const bank of Array.isArray(profile.banks) ? profile.banks : []) {
     const id = safeText(bank?.id, 120);
+    const sourceName = safeText(bank?.name || bank?.nome, 100) || null;
+    const sourceInstitution = safeText(bank?.institution || bank?.instituicao || bank?.bankName, 100) || null;
+    const sourceAccountName = safeText(bank?.accountName || bank?.nickname || bank?.apelido || bank?.label, 100) || null;
+    const ownerHint = safeText(
+      bank?.owner || bank?.ownerName || bank?.titular || bank?.holder || bank?.responsavel || bank?.responsável,
+      80,
+    ) || null;
     const value = {
       id,
       name: bankDisplayName(bank),
       institution: bankInstitutionName(bank),
       type: safeText(bank?.type || bank?.tipo || 'corrente', 50),
       balance: asNumber(bank?.balance ?? bank?.saldo),
+      sourceName,
+      sourceInstitution,
+      sourceAccountName,
+      ownerHint,
       createdAt: safeText(bank?.createdAt, 50) || null,
       updatedAt: safeText(bank?.updatedAt, 50) || null,
       lastReconciledAt: safeText(bank?.lastReconciledAt, 50) || null,
@@ -309,7 +320,16 @@ function resolveBank(item, lookup) {
   const id = safeText(item?.bankId || item?.accountId || item?.contaId || item?.originId, 120);
   if (id && lookup?.banks?.has(id)) return lookup.banks.get(id);
   const rawName = item?.bankName || item?.bank || item?.conta || item?.account || item?.accountName;
-  return matchEntity(rawName, lookup?.bankSearch || [], ['name', 'institution']) || null;
+  const wanted = normalizeText(rawName);
+  if (!wanted) return null;
+  const banks = lookup?.bankSearch || [];
+  const exactName = banks.filter(bank => normalizeText(bank.name) === wanted || normalizeText(bank.sourceAccountName) === wanted);
+  if (exactName.length === 1) return exactName[0];
+  const exactInstitution = banks.filter(bank => normalizeText(bank.institution) === wanted || normalizeText(bank.sourceInstitution) === wanted);
+  if (exactInstitution.length === 1) return exactInstitution[0];
+  const partial = banks.filter(bank => [bank.name, bank.sourceAccountName, bank.institution]
+    .some(value => normalizeText(value).includes(wanted)));
+  return partial.length === 1 ? partial[0] : null;
 }
 
 function resolveCard(item, lookup) {
@@ -369,6 +389,7 @@ function normalizePrimaryTransaction(item, lookup) {
     source,
     isTransfer,
     transferGroupId: safeText(item?.transferGroupId, 160) || null,
+    debtId: safeText(item?.debtId || item?.dividaId, 120) || null,
     coveredByBenefit,
     isInvoicePayment,
     createdAt: safeText(item?.createdAt, 60) || null,
@@ -438,7 +459,7 @@ function collectTransactions(profile = {}) {
   return { lookup, items: [...dedupedPrimary, ...cardPurchases] };
 }
 
-function publicRecord(record) {
+function publicRecord(record, lookup = null) {
   return {
     id: record.id,
     kind: record.kind,
@@ -459,6 +480,7 @@ function publicRecord(record) {
     source: record.source,
     isTransfer: record.isTransfer,
     transferGroupId: record.transferGroupId,
+    debtId: record.debtId || null,
     coveredByBenefit: record.coveredByBenefit,
     isInvoicePayment: record.isInvoicePayment,
     installments: record.installments || null,
@@ -466,6 +488,7 @@ function publicRecord(record) {
     hasInterest: record.hasInterest || false,
     createdAt: record.createdAt,
     updatedAt: record.updatedAt,
+    owner: lookup ? fallbackOwnerForRecord(record, lookup) : null,
   };
 }
 
@@ -771,24 +794,57 @@ function sortPendingRecords(records) {
 
 const OWNER_STOPWORDS = new Set([
   'banco', 'bank', 'conta', 'corrente', 'poupanca', 'poupança', 'carteira', 'digital',
-  'cartao', 'cartao', 'credito', 'crédito', 'visa', 'mastercard', 'elo', 'amex',
+  'cartao', 'cartão', 'credito', 'crédito', 'visa', 'mastercard', 'elo', 'amex',
   'nubank', 'inter', 'caixa', 'bradesco', 'itau', 'itaú', 'santander', 'c6',
   'principal', 'reserva', 'investimentos', 'investimento', 'platinum', 'gold', 'black',
 ]);
+
+const OWNER_ALIAS_GROUPS = [
+  { key: 'owner:gui', label: 'Gui', aliases: ['gui', 'guilherme'] },
+  { key: 'owner:luh', label: 'Luh', aliases: ['luh', 'ludmilla', 'ludmila'] },
+];
+
+function wordsOf(value) {
+  return normalizeText(value).split(/[^a-z0-9]+/).filter(Boolean);
+}
+
+function canonicalOwnerAlias(token) {
+  const normalized = normalizeText(token);
+  return OWNER_ALIAS_GROUPS.find(group => group.aliases.includes(normalized)) || null;
+}
 
 function entityText(entity = {}) {
   return normalizeText([
     entity.name, entity.nome, entity.accountName, entity.nickname, entity.apelido,
     entity.institution, entity.instituicao, entity.bankName, entity.bank,
     entity.creditor, entity.credor, entity.description, entity.descricao,
+    entity.owner, entity.ownerName, entity.titular, entity.holder, entity.responsavel, entity.responsável,
+    entity.notes, entity.obs, entity.observacao,
+    entity.account?.name, entity.account?.institution,
+    entity.card?.name, entity.card?.brand,
   ].filter(Boolean).join(' '));
 }
 
 function meaningfulOwnerTokens(bank = {}) {
-  const institutionTokens = new Set(normalizeText(bank.institution).split(/[^a-z0-9]+/).filter(Boolean));
-  return normalizeText(`${bank.name || ''} ${bank.institution || ''}`)
-    .split(/[^a-z0-9]+/)
-    .filter(token => token.length >= 2 && !OWNER_STOPWORDS.has(token) && !institutionTokens.has(token));
+  const explicitInstitution = bank.sourceInstitution || (
+    normalizeText(bank.institution) !== normalizeText(bank.name) ? bank.institution : ''
+  );
+  const institutionTokens = new Set(wordsOf(explicitInstitution));
+  const candidates = [
+    bank.ownerHint,
+    bank.sourceAccountName,
+    bank.sourceName,
+    bank.name,
+  ].filter(Boolean);
+  const tokens = [];
+  for (const candidate of candidates) {
+    for (const token of wordsOf(candidate)) {
+      if (token.length < 2 || OWNER_STOPWORDS.has(token)) continue;
+      if (institutionTokens.has(token)) continue;
+      if (!tokens.includes(token)) tokens.push(token);
+    }
+  }
+  return tokens;
 }
 
 function inferAccountForEntity(entity = {}, lookup, relatedPayments = []) {
@@ -859,15 +915,17 @@ function ownerCatalog(lookup) {
   for (const bank of lookup?.bankSearch || []) {
     const tokens = ownerTokensFromBank(bank);
     for (const token of tokens) {
-      const current = map.get(token) || {
-        key: `owner:${token}`,
-        label: titleCaseOwner(token),
-        tokens: new Set(),
+      const aliasGroup = canonicalOwnerAlias(token);
+      const key = aliasGroup?.key || `owner:${token}`;
+      const current = map.get(key) || {
+        key,
+        label: aliasGroup?.label || titleCaseOwner(token),
+        tokens: new Set(aliasGroup?.aliases || []),
         accounts: [],
       };
       current.tokens.add(token);
       if (!current.accounts.some(account => account.id === bank.id)) current.accounts.push(bank);
-      map.set(token, current);
+      map.set(key, current);
     }
   }
   return [...map.values()].map(owner => ({ ...owner, tokens: [...owner.tokens] }));
@@ -877,9 +935,15 @@ function ownerForAccount(account, lookup) {
   if (!account) return null;
   const tokens = ownerTokensFromBank(account);
   if (!tokens.length) return null;
+  const catalog = ownerCatalog(lookup);
+  for (const token of tokens) {
+    const aliasGroup = canonicalOwnerAlias(token);
+    const catalogMatch = catalog.find(owner => owner.key === aliasGroup?.key || owner.tokens.includes(token));
+    if (catalogMatch) return catalogMatch;
+    if (aliasGroup) return { ...aliasGroup, tokens: [...aliasGroup.aliases], accounts: [account] };
+  }
   const token = tokens[0];
-  const catalogMatch = ownerCatalog(lookup).find(owner => owner.tokens.includes(token));
-  return catalogMatch || { key: `owner:${token}`, label: titleCaseOwner(token), tokens: [token], accounts: [account] };
+  return { key: `owner:${token}`, label: titleCaseOwner(token), tokens: [token], accounts: [account] };
 }
 
 function inferOwnerForEntity(entity = {}, lookup, explicitAccount = null) {
@@ -888,19 +952,22 @@ function inferOwnerForEntity(entity = {}, lookup, explicitAccount = null) {
 
   const haystack = entityText(entity);
   if (!haystack) return null;
-  const words = new Set(haystack.split(/[^a-z0-9]+/).filter(Boolean));
+  const words = new Set(wordsOf(haystack));
   let best = null;
   let bestScore = 0;
   for (const owner of ownerCatalog(lookup)) {
     let score = 0;
     for (const token of owner.tokens) {
-      if (words.has(token)) score += 60 + token.length;
-      else if (haystack.includes(token)) score += 25 + token.length;
+      if (words.has(token)) {
+        score += 70 + token.length;
+      } else if (token.length >= 4 && haystack.includes(token)) {
+        score += 25 + token.length;
+      }
     }
     if (score > bestScore) { best = owner; bestScore = score; }
   }
-  if (!best || bestScore < 25) return null;
-  return { ...best, confidence: bestScore >= 60 ? 'high' : 'medium', source: 'name' };
+  if (!best || bestScore < 30) return null;
+  return { ...best, confidence: bestScore >= 70 ? 'high' : 'medium', source: 'name' };
 }
 
 function ownerDescriptor(owner) {
@@ -931,6 +998,81 @@ function buildAccountSnapshot(profile = {}) {
     byOwner,
     totalBalance: Number(accounts.reduce((sum, account) => sum + account.balance, 0).toFixed(2)),
   };
+}
+
+function fallbackOwnerForRecord(record, lookup) {
+  const inferred = inferOwnerForEntity(record, lookup, record?.account || null);
+  if (inferred) return ownerDescriptor(inferred);
+  if (record?.account) {
+    return {
+      key: `account:${record.account.id || normalizeText(record.account.name || record.account.institution)}`,
+      label: record.account.name || record.account.institution || 'Conta bancária',
+      unassigned: false,
+      confidence: 'high',
+      source: 'account_without_owner_hint',
+    };
+  }
+  if (record?.card) {
+    return {
+      key: `card:${record.card.id || normalizeText(record.card.name)}`,
+      label: record.card.name || 'Cartão',
+      unassigned: true,
+      confidence: 'low',
+      source: 'card_without_owner_hint',
+    };
+  }
+  return ownerDescriptor(null);
+}
+
+function buildOwnerFinancialBreakdown(records, profile = {}) {
+  const lookup = buildLookup(profile);
+  const buckets = new Map();
+  for (const record of records) {
+    if (!financialRecordIsRelevant(record)) continue;
+    const owner = fallbackOwnerForRecord(record, lookup);
+    const bucket = buckets.get(owner.key) || {
+      ...owner,
+      accounts: [],
+      paidIncome: 0,
+      paidExpenses: 0,
+      pendingIncome: 0,
+      pendingExpenses: 0,
+      partialIncome: 0,
+      partialExpenses: 0,
+      realizedBalance: 0,
+      records: 0,
+    };
+    if (record.account && !bucket.accounts.some(account => account.id === record.account.id)) {
+      bucket.accounts.push(record.account);
+    }
+    bucket.records += 1;
+    if (record.status === 'paid') {
+      if (record.type === 'income') bucket.paidIncome += record.amount;
+      if (record.type === 'expense') bucket.paidExpenses += record.amount;
+    } else if (record.status === 'pending') {
+      if (record.type === 'income') bucket.pendingIncome += record.amount;
+      if (record.type === 'expense') bucket.pendingExpenses += record.amount;
+    } else if (record.status === 'partial') {
+      if (record.type === 'income') bucket.partialIncome += record.amount;
+      if (record.type === 'expense') bucket.partialExpenses += record.amount;
+    }
+    bucket.realizedBalance = bucket.paidIncome - bucket.paidExpenses;
+    buckets.set(owner.key, bucket);
+  }
+  return [...buckets.values()].map(bucket => ({
+    ...bucket,
+    paidIncome: Number(bucket.paidIncome.toFixed(2)),
+    paidExpenses: Number(bucket.paidExpenses.toFixed(2)),
+    pendingIncome: Number(bucket.pendingIncome.toFixed(2)),
+    pendingExpenses: Number(bucket.pendingExpenses.toFixed(2)),
+    partialIncome: Number(bucket.partialIncome.toFixed(2)),
+    partialExpenses: Number(bucket.partialExpenses.toFixed(2)),
+    realizedBalance: Number(bucket.realizedBalance.toFixed(2)),
+  })).sort((a, b) => {
+    if (a.unassigned !== b.unassigned) return a.unassigned ? 1 : -1;
+    const total = item => item.paidIncome + item.paidExpenses + item.pendingIncome + item.pendingExpenses;
+    return total(b) - total(a);
+  });
 }
 
 function significantTokens(value) {
@@ -1054,11 +1196,14 @@ function buildMonthlyCommitments(profile = {}, now = new Date()) {
   const cardsById = new Map(accountCardData.cards.map(card => [String(card.id || ''), card]));
   const normalizedTransactions = (Array.isArray(profile.transactions) ? profile.transactions : []).map(item => normalizePrimaryTransaction(item, lookup));
 
-  function latestPaymentAccount(entityName, kind) {
+  function latestPaymentAccount(entityName, kind, entityId = null) {
     const candidates = normalizedTransactions.filter(record => {
       if (!record.account || record.status !== 'paid') return false;
       if (kind === 'card' && !record.isInvoicePayment) return false;
-      if (kind === 'debt' && !/(parcela|divida|dívida|financiamento|emprestimo|empréstimo)/i.test(record.description)) return false;
+      if (kind === 'debt') {
+        if (entityId && record.debtId && String(record.debtId) === String(entityId)) return true;
+        if (!/(pagamento|parcela|divida|dívida|financiamento|emprestimo|empréstimo)/i.test(record.description)) return false;
+      }
       const overlap = tokenOverlap(record.description, entityName);
       return overlap.count >= 1 || normalizeText(record.description).includes(normalizeText(entityName));
     }).sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')));
@@ -1091,7 +1236,7 @@ function buildMonthlyCommitments(profile = {}, now = new Date()) {
 
   const openDebts = (Array.isArray(profile.debts) ? profile.debts : []).map(rawDebt => {
     const debt = normalizeDebt(rawDebt, lookup);
-    const account = debt.account || latestPaymentAccount(debt.name, 'debt');
+    const account = debt.account || latestPaymentAccount(debt.name, 'debt', debt.id);
     const owner = inferOwnerForEntity(rawDebt, lookup, account);
     const paidThisMonth = debt.payments
       .filter(payment => String(payment.date || '').slice(0, 7) === month)
@@ -1270,22 +1415,23 @@ function buildCompleteByAccountResponse(overview) {
   if ((analysis.pendingIncome || 0) > 0 && (analysis.shortfall || 0) > 0) lines.push(`Falta após as receitas pendentes: ${formatBRL(analysis.shortfall)}`);
 
   const transactionByOwner = new Map();
-  for (const account of overview.byAccount || []) {
-    const realAccount = snapshot.accounts.find(item => item.id === account.id);
-    const owner = realAccount?.owner || { key: account.key, label: account.name, unassigned: account.unassigned };
-    const bucket = transactionByOwner.get(owner.key) || {
-      ...owner, accounts: [], paidIncome: 0, paidExpenses: 0, pendingIncome: 0, pendingExpenses: 0, realizedBalance: 0,
-    };
-    if (realAccount && !bucket.accounts.some(item => item.id === realAccount.id)) bucket.accounts.push(realAccount);
-    bucket.paidIncome += account.paidIncome;
-    bucket.paidExpenses += account.paidExpenses;
-    bucket.pendingIncome += account.pendingIncome;
-    bucket.pendingExpenses += account.pendingExpenses;
-    bucket.realizedBalance = bucket.paidIncome - bucket.paidExpenses;
-    transactionByOwner.set(owner.key, bucket);
+  for (const owner of overview.byOwner || []) {
+    transactionByOwner.set(owner.key, {
+      ...owner,
+      accounts: [...(owner.accounts || [])],
+    });
   }
   for (const owner of snapshot.byOwner || []) {
-    const bucket = transactionByOwner.get(owner.key) || { ...owner, paidIncome: 0, paidExpenses: 0, pendingIncome: 0, pendingExpenses: 0, realizedBalance: 0 };
+    const bucket = transactionByOwner.get(owner.key) || {
+      ...owner,
+      paidIncome: 0,
+      paidExpenses: 0,
+      pendingIncome: 0,
+      pendingExpenses: 0,
+      partialIncome: 0,
+      partialExpenses: 0,
+      realizedBalance: 0,
+    };
     bucket.accounts = owner.accounts;
     transactionByOwner.set(owner.key, bucket);
   }
@@ -1466,6 +1612,7 @@ function financialOverview(profile, args = {}, now = new Date()) {
       key: record.category?.id || record.category?.name || 'outros', name: record.category?.name || 'Outros', emoji: record.category?.emoji || '🏷️',
     })),
     byAccount: accountBreakdown,
+    byOwner: buildOwnerFinancialBreakdown(relevant, profile),
     paidByAccount: aggregate([...paidIncome, ...paidExpenses], record => {
       const descriptor = accountDescriptor(record);
       return { key: descriptor.key, name: descriptor.name, institution: descriptor.institution, unassigned: descriptor.unassigned };
@@ -1985,14 +2132,14 @@ async function executeAllofyTool(name, args, uid, prefetchedProfile = null, cont
   };
   if (name === 'get_financial_overview') return financialOverview(profile, args);
   if (name === 'search_transactions') {
-    const { items } = collectTransactions(profile);
-    const result = filterRecords(items, args).slice(0, args.limit || 50).map(publicRecord);
+    const { lookup, items } = collectTransactions(profile);
+    const result = filterRecords(items, args).slice(0, args.limit || 50).map(record => publicRecord(record, lookup));
     return { matched: result.length, filters: args, items: result };
   }
   if (name === 'get_transaction_details') {
-    const { items } = collectTransactions(profile);
+    const { lookup, items } = collectTransactions(profile);
     const record = items.find(item => String(item.id) === String(args.transactionId));
-    return record ? { found: true, transaction: publicRecord(record) } : { found: false, error: 'Transação não encontrada.' };
+    return record ? { found: true, transaction: publicRecord(record, lookup) } : { found: false, error: 'Transação não encontrada.' };
   }
   if (name === 'get_account_activity') return getAccountActivity(profile, args);
   if (name === 'get_accounts_and_cards') return buildAccountsAndCards(profile);
