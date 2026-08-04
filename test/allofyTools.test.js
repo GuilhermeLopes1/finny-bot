@@ -169,3 +169,64 @@ test('compra de cartão pendente não entra nas despesas realizadas', () => {
   assert.equal(overview.pendingExpenses, 90);
   assert.equal(overview.pendingItems[0].card.name, 'Cartão Gui');
 });
+
+test('resumo completo inclui faturas abertas e parcelas de dívidas do mês', () => {
+  const profile = {
+    banks: [
+      { id: 'luh', name: 'Nubank', accountName: 'Nubank Luh', balance: 34.5 },
+      { id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 0.77 },
+    ],
+    cards: [
+      {
+        id: 'card-luh', name: 'Bradesco Luh', brand: 'Visa', limit: 2000, due: 12,
+        invoiceOverrides: { '2026-08': { amount: 807.22 } }, invoicePayments: {}, debtBalance: 0,
+      },
+      {
+        id: 'card-gui', name: 'Caixa Gui', brand: 'Mastercard', limit: 6000, due: 21,
+        invoiceOverrides: { '2026-08': { amount: 4457.73 } }, invoicePayments: {}, debtBalance: 50,
+      },
+    ],
+    debts: [
+      {
+        id: 'debt1', name: 'Financiamento Palio', total: 12000, paid: 4000, installment: 500,
+        dueDay: 20, status: 'pending', payments: [{ id: 'p1', amount: 500, date: '2026-07-20', bankId: 'luh' }],
+      },
+    ],
+    transactions: [
+      { id: 'tx1', description: 'Luiza', amount: 15, type: 'expense', date: '2026-08-10', bankId: 'luh', status: 'paid' },
+    ],
+  };
+
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.commitments.totals.cardInvoicesOpen, 5314.95);
+  assert.equal(overview.commitments.totals.debtInstallmentsOpen, 500);
+  assert.equal(overview.commitments.totals.activeDebtBalance, 8000);
+  assert.equal(overview.commitments.openCardInvoices.length, 2);
+  assert.equal(overview.commitments.openDebts.length, 1);
+  const luh = overview.commitments.byAccount.find(item => item.name === 'Nubank Luh');
+  const gui = overview.commitments.byAccount.find(item => item.name === 'Nubank Gui');
+  assert.equal(luh.cardInvoicesOpen, 807.22);
+  assert.equal(luh.debtInstallmentsOpen, 500);
+  assert.equal(gui.cardInvoicesOpen, 4507.73);
+  assert.match(overview.suggestedCompleteResponse, /FATURAS DE CARTÃO EM ABERTO/);
+  assert.match(overview.suggestedCompleteResponse, /DÍVIDAS E FINANCIAMENTOS/);
+  assert.match(overview.suggestedCompleteResponse, /Bradesco Luh/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /NUBANK LUH/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /NUBANK GUI/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /Faturas abertas:/);
+  assert.match(overview.suggestedCompleteByAccountResponse, /Dívidas e financiamentos:/);
+  assert.doesNotMatch(overview.suggestedCompleteResponse, /\*\*|^#/m);
+});
+
+test('dívida paga no mês não deixa parcela aberta novamente', () => {
+  const profile = {
+    banks: [{ id: 'gui', name: 'Nubank', accountName: 'Nubank Gui' }],
+    debts: [{
+      id: 'd1', name: 'Empréstimo Gui', total: 3000, paid: 1000, installment: 200,
+      dueDay: 10, status: 'pending', payments: [{ amount: 200, date: '2026-08-02', bankId: 'gui' }],
+    }],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.commitments.openDebts[0].installmentOpen, 0);
+  assert.equal(overview.commitments.totals.debtInstallmentsOpen, 0);
+});
