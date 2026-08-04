@@ -306,3 +306,70 @@ test('dívida herda proprietário do último pagamento registrado nas transaçõ
   assert.equal(gui.debts[0].name, 'Financiamento Gol 2018');
   assert.equal(overview.dataQuality.unassignedCommitments, 0);
 });
+
+test('formato antigo de conta com nome completo ainda separa Gui e Luh', () => {
+  const profile = {
+    banks: [
+      { id: 'gui', name: 'Nubank Gui', balance: 0.77 },
+      { id: 'luh', name: 'Nubank Luh', balance: 34.50 },
+    ],
+    categories: [{ id: 'pessoal', name: 'Pessoal' }],
+    transactions: [
+      { id: 'paid-luh', description: 'Luiza', amount: 15, type: 'expense', date: '2026-08-10', bankId: 'luh', status: 'paid' },
+      { id: 'gui1', description: 'Aluguel', amount: 700, type: 'expense', date: '2026-08-10', bankId: 'gui', status: 'pending' },
+      { id: 'luh1', description: 'Psicóloga', amount: 100, type: 'expense', date: '2026-08-20', bankId: 'luh', status: 'pending' },
+    ],
+    cards: [
+      { id: 'caixa-gui', name: 'Caixa Gui', due: 22, invoiceOverrides: { '2026-08': { amount: 2570.57 } } },
+      { id: 'c6-luh', name: 'C6 Luh', due: 15, invoiceOverrides: { '2026-08': { amount: 624.02 } } },
+    ],
+    debts: [
+      { id: 'gol', name: 'Financiamento Gol 2018', total: 70000, paid: 11371.84, installment: 1221.42, dueDay: 7, status: 'pending', payments: [{ amount: 1221.42, date: '2026-07-07', bankId: 'gui' }] },
+    ],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  const guiSnapshot = overview.accountSnapshot.byOwner.find(item => item.key === 'owner:gui');
+  const luhSnapshot = overview.accountSnapshot.byOwner.find(item => item.key === 'owner:luh');
+  assert.equal(guiSnapshot.balance, 0.77);
+  assert.equal(luhSnapshot.balance, 34.5);
+  assert.equal(overview.commitments.byOwner.find(item => item.key === 'owner:gui').cardInvoicesOpen, 2570.57);
+  assert.equal(overview.commitments.byOwner.find(item => item.key === 'owner:luh').cardInvoicesOpen, 624.02);
+  assert.equal(overview.commitments.byOwner.find(item => item.key === 'owner:gui').debtInstallmentsOpen, 1221.42);
+  assert.match(overview.suggestedExecutiveResponse, /\nGUI\n/);
+  assert.match(overview.suggestedExecutiveResponse, /\nLUH\n/);
+  assert.doesNotMatch(overview.suggestedExecutiveResponse, /SEM VÍNCULO IDENTIFICADO/);
+  assert.equal(overview.dataQuality.unassignedCommitments, 0);
+});
+
+test('busca de transações devolve proprietário resolvido para conta antiga e cartão', async () => {
+  const profile = {
+    banks: [
+      { id: 'gui', name: 'Nubank Gui', balance: 1 },
+      { id: 'luh', name: 'Nubank Luh', balance: 2 },
+    ],
+    cards: [{ id: 'c-luh', name: 'C6 Luh' }],
+    transactions: [{ id: 't-gui', description: 'Aluguel', amount: 700, type: 'expense', date: '2026-08-10', bankId: 'gui', status: 'pending' }],
+    cardTransactions: [{ id: 't-luh', descricao: 'Mercado', valorTotal: 50, dataCompra: '2026-08-10', cardId: 'c-luh', status: 'paid' }],
+  };
+  const result = await executeAllofyTool('search_transactions', {
+    period: 'all', startDate: null, endDate: null, exactDate: null,
+    type: 'all', status: 'all', category: null, account: null, card: null,
+    benefit: null, query: null, recurrence: 'all', source: 'all', includeTransfers: true,
+    minAmount: null, maxAmount: null, sort: 'date_desc', limit: 50,
+  }, 'uid', profile);
+  assert.equal(result.items.find(item => item.id === 't-gui').owner.label, 'Gui');
+  assert.equal(result.items.find(item => item.id === 't-luh').owner.label, 'Luh');
+});
+
+test('nome genérico do banco não é atribuído à conta errada quando há duas contas iguais', () => {
+  const profile = {
+    banks: [
+      { id: 'gui', name: 'Nubank', accountName: 'Nubank Gui' },
+      { id: 'luh', name: 'Nubank', accountName: 'Nubank Luh' },
+    ],
+    transactions: [{ id: 'legacy', description: 'Lançamento antigo', amount: 10, type: 'expense', date: '2026-08-02', bankName: 'Nubank', status: 'paid' }],
+  };
+  const { items } = collectTransactions(profile);
+  assert.equal(items[0].account, null);
+  assert.equal(items[0].accountId, null);
+});
