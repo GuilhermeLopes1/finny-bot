@@ -1,6 +1,6 @@
 const { getDb, admin } = require('../config/firebase');
 const { createResponse, outputText } = require('../config/openai');
-const { tools, executeAllofyTool } = require('../services/allofyTools');
+const { tools, executeAllofyTool, financialOverview } = require('../services/allofyTools');
 const logger = require('../utils/logger');
 const { cleanAllofyFormatting } = require('../utils/textFormatting');
 
@@ -19,8 +19,8 @@ REGRAS DE DADOS — OBRIGATÓRIAS:
 - Em resumos de gastos, não conte transferências entre contas, despesas cobertas por benefício nem pagamento de fatura como um novo gasto, pois isso geraria dupla contagem. Compras do cartão já representam o gasto.
 - Separe pago, pendente, parcial e cancelado. Pendências não entram no saldo realizado, mas devem ser apresentadas separadamente quando forem relevantes.
 - Para pedidos amplos como “quero um resumo do mês atual”, use get_financial_overview com period='month'. Apresente primeiro receitas realizadas, despesas realizadas e saldo; depois mostre obrigatoriamente as pendências do período, sua quantidade, os principais itens e o saldo projetado após elas.
-- Quando o usuário disser “resumo completo”, “resumo detalhado”, “tudo do mês” ou pedir separação entre Gui e Luh, use suggestedCompleteByAccountResponse como base e confira os campos commitments.byAccount, byAccount e pendingByAccount. Inclua faturas de cartão em aberto, parcelas de dívidas do mês e saldo devedor das dívidas ativas.
-- Faturas abertas são compromissos de pagamento e devem aparecer no resumo completo, mas não podem ser somadas novamente como despesa quando as compras do cartão já foram contabilizadas.
+- Quando o usuário disser “resumo completo”, “resumo detalhado”, “tudo do mês” ou pedir separação entre Gui e Luh, use suggestedExecutiveResponse como resposta-base obrigatória. Ele já inclui saldos bancários, realizado, pendências diretas, faturas, parcelas, dívidas, prioridades, cobertura do caixa e agrupamento por proprietário.
+- Faturas abertas são compromissos de pagamento. Use commitmentAnalysis.uniqueCashOutflow para a necessidade de caixa sem sobreposições fortes; não faça a soma bruta por conta própria.
 - Dívidas cadastradas devem aparecer no resumo completo mesmo que a parcela ainda não tenha virado uma transação. Mostre a parcela aberta do mês e o saldo devedor.
 - get_financial_overview devolve pendingItems, pendingByAccount e suggestedResponse. Use esses campos. Nunca diga “pendências não separadas por conta” ou “não foi possível identificar a conta” sem antes verificar pendingByAccount e pendingItems.
 - Em um resumo geral, não crie uma seção para cada conta sem o usuário pedir. Não liste contas sem movimentação. Não explique exclusões técnicas como transferências ou pagamento de fatura, a menos que isso seja necessário para esclarecer um valor ou que o usuário pergunte.
@@ -38,9 +38,38 @@ REGRAS DE RESPOSTA:
 - Seja objetivo; use listas curtas quando melhorarem a leitura. Não use tabelas longas.
 - A interface do Allofy exibe texto puro. Não use Markdown. Não use #, ##, **, __, linhas com --- nem asteriscos decorativos.
 - Para organizar, use títulos simples em letras maiúsculas, linhas em branco e o marcador •. Use no máximo um emoji por seção quando realmente ajudar.
-- Em resumos financeiros gerais, prefira esta estrutura: título do período; bloco “Realizado”; bloco “Pendências”; saldo projetado; no máximo um destaque final útil.
+- Em resumos financeiros completos, mostre nesta ordem: visão geral e saldos bancários; realizado; compromissos líquidos do mês; separação por proprietário/conta; prioridades; saldo devedor; leitura rápida.
 - Se a ferramenta devolver suggestedResponse, use-o como base factual e melhore apenas a redação, sem remover pendências ou trocar os valores.
 - Se faltarem dados, diga exatamente o que falta e em qual área do app cadastrar.`;
+
+
+function normalizeIntentText(value) {
+  return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim();
+}
+
+function currentMonthNameNormalized() {
+  return normalizeIntentText(new Intl.DateTimeFormat('pt-BR', { month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date()));
+}
+
+function isDirectSummaryRequest(text) {
+  return /(quero|me da|me de|faz|faca|gere|mostre|passe|preciso|puxa|monte)/.test(text);
+}
+
+function wantsCurrentMonthCompleteSummary(message) {
+  const text = normalizeIntentText(message);
+  const asksSummary = /(resumo|balanco|visao geral|fechamento)/.test(text);
+  const asksComplete = /(completo|detalhado|tudo|separando|separa|gui.*luh|luh.*gui)/.test(text);
+  const currentMonth = new RegExp(`mes atual|deste mes|desse mes|do mes|${currentMonthNameNormalized()}`).test(text);
+  return isDirectSummaryRequest(text) && asksSummary && asksComplete && currentMonth;
+}
+
+function wantsCurrentMonthSimpleSummary(message) {
+  const text = normalizeIntentText(message);
+  const currentMonth = new RegExp(`mes atual|deste mes|desse mes|do mes|${currentMonthNameNormalized()}`).test(text);
+  return isDirectSummaryRequest(text) && /(resumo|balanco|visao geral)/.test(text)
+    && currentMonth
+    && !/(completo|detalhado|tudo|separando|separa|gui.*luh|luh.*gui)/.test(text);
+}
 
 function historyRef(uid) {
   return getDb().collection('allofy_conversations').doc(uid).collection('messages');
@@ -60,6 +89,15 @@ async function saveMessage(uid, role, content) {
 }
 
 async function runAllofy(uid, profile, message, history) {
+  if (wantsCurrentMonthCompleteSummary(message)) {
+    const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null });
+    return cleanAllofyFormatting(overview.suggestedExecutiveResponse);
+  }
+  if (wantsCurrentMonthSimpleSummary(message)) {
+    const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null });
+    return cleanAllofyFormatting(overview.suggestedResponse);
+  }
+
   const input = [
     ...history.map(item => ({
       role: item.role === 'assistant' ? 'assistant' : 'user',
@@ -73,7 +111,7 @@ async function runAllofy(uid, profile, message, history) {
     input,
     tools,
     parallel_tool_calls: false,
-    max_output_tokens: 2600,
+    max_output_tokens: 3200,
     text: { verbosity: 'medium' },
   });
 
@@ -104,7 +142,7 @@ async function runAllofy(uid, profile, message, history) {
       input,
       tools,
       parallel_tool_calls: false,
-      max_output_tokens: 2600,
+      max_output_tokens: 3200,
       text: { verbosity: 'medium' },
     });
   }
