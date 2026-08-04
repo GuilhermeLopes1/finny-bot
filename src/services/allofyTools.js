@@ -768,6 +768,175 @@ function sortPendingRecords(records) {
   });
 }
 
+
+const OWNER_STOPWORDS = new Set([
+  'banco', 'bank', 'conta', 'corrente', 'poupanca', 'poupança', 'carteira', 'digital',
+  'cartao', 'cartao', 'credito', 'crédito', 'visa', 'mastercard', 'elo', 'amex',
+  'nubank', 'inter', 'caixa', 'bradesco', 'itau', 'itaú', 'santander', 'c6',
+  'principal', 'reserva', 'investimentos', 'investimento', 'platinum', 'gold', 'black',
+]);
+
+function entityText(entity = {}) {
+  return normalizeText([
+    entity.name, entity.nome, entity.accountName, entity.nickname, entity.apelido,
+    entity.institution, entity.instituicao, entity.bankName, entity.bank,
+    entity.creditor, entity.credor, entity.description, entity.descricao,
+  ].filter(Boolean).join(' '));
+}
+
+function meaningfulOwnerTokens(bank = {}) {
+  const institutionTokens = new Set(normalizeText(bank.institution).split(/[^a-z0-9]+/).filter(Boolean));
+  return normalizeText(`${bank.name || ''} ${bank.institution || ''}`)
+    .split(/[^a-z0-9]+/)
+    .filter(token => token.length >= 2 && !OWNER_STOPWORDS.has(token) && !institutionTokens.has(token));
+}
+
+function inferAccountForEntity(entity = {}, lookup, relatedPayments = []) {
+  const explicit = resolveBank(entity, lookup);
+  if (explicit) return explicit;
+
+  for (const payment of [...relatedPayments].reverse()) {
+    const paymentBank = payment?.account || resolveBank(payment, lookup);
+    if (paymentBank) return paymentBank;
+  }
+
+  const haystack = entityText(entity);
+  if (!haystack) return null;
+  let best = null;
+  let bestScore = 0;
+  for (const bank of lookup?.bankSearch || []) {
+    let score = 0;
+    const bankName = normalizeText(bank.name);
+    const institution = normalizeText(bank.institution);
+    if (bankName && haystack.includes(bankName)) score += 50 + bankName.length;
+    if (institution && haystack.includes(institution)) score += 8;
+    for (const token of meaningfulOwnerTokens(bank)) {
+      if (haystack.split(/[^a-z0-9]+/).includes(token)) score += 30 + token.length;
+    }
+    if (score > bestScore) {
+      best = bank;
+      bestScore = score;
+    }
+  }
+  return bestScore >= 20 ? best : null;
+}
+
+function accountSummaryDescriptor(account) {
+  if (!account) return {
+    key: '__sem_conta__', id: null, name: 'Sem conta vinculada', institution: null, unassigned: true,
+  };
+  return {
+    key: account.id || normalizeText(`${account.name} ${account.institution}`) || '__sem_conta__',
+    id: account.id || null,
+    name: account.name || account.institution || 'Conta',
+    institution: account.institution || null,
+    unassigned: false,
+  };
+}
+
+function monthDueDate(month, dueDay) {
+  if (!month || !dueDay) return null;
+  const [year, monthNumber] = String(month).split('-').map(Number);
+  if (!year || !monthNumber) return null;
+  const lastDay = new Date(year, monthNumber, 0).getDate();
+  const day = Math.min(Math.max(1, Math.trunc(asNumber(dueDay))), lastDay);
+  return `${year}-${String(monthNumber).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
+}
+
+function buildMonthlyCommitments(profile = {}, now = new Date()) {
+  const month = currentMonthKey(now);
+  const lookup = buildLookup(profile);
+  const accountCardData = buildAccountsAndCards(profile, now);
+  const cardsById = new Map(accountCardData.cards.map(card => [String(card.id || ''), card]));
+
+  const openCardInvoices = (Array.isArray(profile.cards) ? profile.cards : []).map(rawCard => {
+    const summary = cardsById.get(String(rawCard?.id || '')) || {};
+    const account = inferAccountForEntity(rawCard, lookup);
+    return {
+      id: summary.id || safeText(rawCard?.id, 120) || null,
+      name: summary.name || safeText(rawCard?.name || rawCard?.nome || 'Cartão', 100),
+      brand: summary.brand || safeText(rawCard?.brand || rawCard?.bandeira, 40) || null,
+      last4: summary.last4 || safeText(rawCard?.last4 || rawCard?.final, 4) || null,
+      month,
+      invoiceTotal: Number(asNumber(summary.invoiceTotal).toFixed(2)),
+      paid: Number(asNumber(summary.paid).toFixed(2)),
+      invoiceOpen: Number(asNumber(summary.invoice).toFixed(2)),
+      debtBalance: Number(asNumber(summary.debtBalance).toFixed(2)),
+      totalOpen: Number(asNumber(summary.totalOpen).toFixed(2)),
+      dueDay: summary.dueDay ?? rawCard?.due ?? rawCard?.dueDay ?? rawCard?.vencimento ?? null,
+      dueDate: monthDueDate(month, summary.dueDay ?? rawCard?.due ?? rawCard?.dueDay ?? rawCard?.vencimento),
+      invoiceSource: summary.invoiceSource || null,
+      account: account ? accountSummaryDescriptor(account) : null,
+    };
+  }).filter(card => card.totalOpen > 0);
+
+  const openDebts = (Array.isArray(profile.debts) ? profile.debts : []).map(rawDebt => {
+    const debt = normalizeDebt(rawDebt, lookup);
+    const account = debt.account || inferAccountForEntity(rawDebt, lookup, debt.payments);
+    const paidThisMonth = debt.payments
+      .filter(payment => String(payment.date || '').slice(0, 7) === month)
+      .reduce((sum, payment) => sum + payment.amount, 0);
+    const installmentDue = Math.min(debt.installment || debt.remaining, debt.remaining);
+    const inferredPaid = paidThisMonth > 0
+      ? paidThisMonth
+      : debt.lastPaidMonth === month ? Math.min(installmentDue, debt.paid) : 0;
+    const installmentOpen = Math.max(0, Number((installmentDue - inferredPaid).toFixed(2)));
+    return {
+      ...debt,
+      account: account ? accountSummaryDescriptor(account) : null,
+      month,
+      dueDate: debt.dueDate || monthDueDate(month, debt.dueDay),
+      installmentDue: Number(installmentDue.toFixed(2)),
+      paidThisMonth: Number(inferredPaid.toFixed(2)),
+      installmentOpen,
+    };
+  }).filter(debt => debt.remaining > 0);
+
+  const grouped = new Map();
+  function bucketFor(account) {
+    const descriptor = account || accountSummaryDescriptor(null);
+    const bucket = grouped.get(descriptor.key) || {
+      ...descriptor,
+      cards: [], debts: [],
+      cardInvoicesOpen: 0,
+      debtInstallmentsOpen: 0,
+      debtBalance: 0,
+    };
+    grouped.set(descriptor.key, bucket);
+    return bucket;
+  }
+  for (const card of openCardInvoices) {
+    const bucket = bucketFor(card.account);
+    bucket.cards.push(card);
+    bucket.cardInvoicesOpen += card.totalOpen;
+  }
+  for (const debt of openDebts) {
+    const bucket = bucketFor(debt.account);
+    bucket.debts.push(debt);
+    bucket.debtInstallmentsOpen += debt.installmentOpen;
+    bucket.debtBalance += debt.remaining;
+  }
+
+  const byAccount = [...grouped.values()].map(bucket => ({
+    ...bucket,
+    cardInvoicesOpen: Number(bucket.cardInvoicesOpen.toFixed(2)),
+    debtInstallmentsOpen: Number(bucket.debtInstallmentsOpen.toFixed(2)),
+    debtBalance: Number(bucket.debtBalance.toFixed(2)),
+  })).sort((a, b) => (b.cardInvoicesOpen + b.debtInstallmentsOpen) - (a.cardInvoicesOpen + a.debtInstallmentsOpen));
+
+  return {
+    month,
+    openCardInvoices,
+    openDebts,
+    byAccount,
+    totals: {
+      cardInvoicesOpen: Number(openCardInvoices.reduce((sum, card) => sum + card.totalOpen, 0).toFixed(2)),
+      debtInstallmentsOpen: Number(openDebts.reduce((sum, debt) => sum + debt.installmentOpen, 0).toFixed(2)),
+      activeDebtBalance: Number(openDebts.reduce((sum, debt) => sum + debt.remaining, 0).toFixed(2)),
+    },
+  };
+}
+
 function formatBRL(value) {
   return Number(value || 0).toLocaleString('pt-BR', {
     style: 'currency',
@@ -795,46 +964,173 @@ function overviewPeriodLabel(period, range) {
   return 'Resumo financeiro';
 }
 
-function buildSuggestedOverviewResponse(overview) {
+function buildSuggestedOverviewResponse(overview, complete = false) {
   const lines = [
-    `**${overviewPeriodLabel(overview.period, overview.range)}**`,
+    overviewPeriodLabel(overview.period, overview.range),
     '',
-    '**Realizado**',
-    `- Receitas: **${formatBRL(overview.income)}**`,
-    `- Despesas: **${formatBRL(overview.expenses)}**`,
-    `- Saldo: **${formatBRL(overview.balance)}**`,
+    'REALIZADO',
+    `Receitas: ${formatBRL(overview.income)}`,
+    `Despesas: ${formatBRL(overview.expenses)}`,
+    `Saldo: ${formatBRL(overview.balance)}`,
   ];
 
-  if (overview.pendingExpenses > 0 || overview.pendingIncome > 0) {
-    lines.push('', '**Pendências do período**');
-    if (overview.pendingExpenses > 0) {
-      lines.push(`- Despesas pendentes: **${formatBRL(overview.pendingExpenses)}** em ${overview.counts.pendingExpenses} lançamento(s)`);
-    }
-    if (overview.pendingIncome > 0) {
-      lines.push(`- Receitas pendentes: **${formatBRL(overview.pendingIncome)}** em ${overview.counts.pendingIncome} lançamento(s)`);
+  lines.push('', 'CONTAS A PAGAR E RECEBER');
+  if (overview.pendingExpenses > 0) {
+    lines.push(`Despesas pendentes: ${formatBRL(overview.pendingExpenses)} em ${overview.counts.pendingExpenses} lançamento(s)`);
+  }
+  if (overview.pendingIncome > 0) {
+    lines.push(`Receitas pendentes: ${formatBRL(overview.pendingIncome)} em ${overview.counts.pendingIncome} lançamento(s)`);
+  }
+  if (overview.pendingExpenses <= 0 && overview.pendingIncome <= 0) {
+    lines.push('Nenhuma pendência cadastrada para o período.');
+  }
+
+  for (const item of overview.pendingItems.slice(0, 8)) {
+    const date = formatDateBR(item.date);
+    const account = item.account?.name || item.card?.name || 'Sem conta vinculada';
+    const prefix = [date, item.description].filter(Boolean).join(' · ');
+    lines.push(`• ${prefix} · ${formatBRL(item.amount)} · ${account}`);
+  }
+  if (overview.pendingItems.length > 8) {
+    lines.push(`• Mais ${overview.pendingItems.length - 8} pendência(s) no período.`);
+  }
+
+  lines.push('', `Saldo projetado após as transações pendentes: ${formatBRL(overview.projectedBalance)}`);
+
+  if (complete) {
+    lines.push('', 'FATURAS DE CARTÃO EM ABERTO');
+    if (overview.commitments.openCardInvoices.length) {
+      for (const card of overview.commitments.openCardInvoices.slice(0, 12)) {
+        const due = card.dueDate ? ` · vence em ${formatDateBR(card.dueDate)}` : '';
+        const owner = card.account?.name ? ` · ${card.account.name}` : '';
+        lines.push(`• ${card.name}: ${formatBRL(card.totalOpen)}${due}${owner}`);
+      }
+      lines.push(`Total em faturas abertas: ${formatBRL(overview.commitments.totals.cardInvoicesOpen)}`);
+    } else {
+      lines.push('Nenhuma fatura aberta identificada para o mês atual.');
     }
 
-    const items = overview.pendingItems.slice(0, 5);
-    for (const item of items) {
-      const date = formatDateBR(item.date);
-      const account = item.account?.name || item.card?.name || 'Sem conta vinculada';
-      const prefix = [date, item.description].filter(Boolean).join(' — ');
-      lines.push(`  - ${prefix}: ${formatBRL(item.amount)} (${account})`);
-    }
-    if (overview.pendingItems.length > items.length) {
-      lines.push(`  - Mais ${overview.pendingItems.length - items.length} pendência(s) no período.`);
+    lines.push('', 'DÍVIDAS E FINANCIAMENTOS');
+    if (overview.commitments.openDebts.length) {
+      for (const debt of overview.commitments.openDebts.slice(0, 12)) {
+        const due = debt.dueDate ? ` · vence em ${formatDateBR(debt.dueDate)}` : '';
+        const owner = debt.account?.name ? ` · ${debt.account.name}` : '';
+        lines.push(`• ${debt.name}: parcela em aberto ${formatBRL(debt.installmentOpen)} · saldo devedor ${formatBRL(debt.remaining)}${due}${owner}`);
+      }
+      lines.push(`Parcelas de dívidas ainda abertas no mês: ${formatBRL(overview.commitments.totals.debtInstallmentsOpen)}`);
+      lines.push(`Saldo devedor total cadastrado: ${formatBRL(overview.commitments.totals.activeDebtBalance)}`);
+    } else {
+      lines.push('Nenhuma dívida ativa identificada.');
     }
 
-    lines.push(`- Saldo projetado após pendências: **${formatBRL(overview.projectedBalance)}**`);
-  } else {
-    lines.push('', '- Não há receitas nem despesas pendentes neste período.');
+    const cashCommitments = overview.pendingExpenses
+      + overview.commitments.totals.cardInvoicesOpen
+      + overview.commitments.totals.debtInstallmentsOpen;
+    lines.push('', 'COMPROMISSOS DO MÊS');
+    lines.push(`Contas pendentes + faturas abertas + parcelas de dívidas: ${formatBRL(cashCommitments)}`);
+    lines.push('As faturas aparecem separadas das despesas para evitar contar a mesma compra duas vezes.');
   }
 
   if (overview.partialExpenses > 0 || overview.partialIncome > 0) {
-    lines.push('', `- Lançamentos parciais: receitas ${formatBRL(overview.partialIncome)} e despesas ${formatBRL(overview.partialExpenses)}.`);
+    lines.push('', `Lançamentos parciais: receitas ${formatBRL(overview.partialIncome)} e despesas ${formatBRL(overview.partialExpenses)}.`);
   }
 
   return lines.join('\n');
+}
+
+function buildCompleteByAccountResponse(overview) {
+  const groups = new Map();
+
+  for (const account of overview.byAccount || []) {
+    if (!account || account.totalRecords <= 0) continue;
+    groups.set(account.key, {
+      key: account.key,
+      name: account.name,
+      institution: account.institution,
+      paidIncome: account.paidIncome,
+      paidExpenses: account.paidExpenses,
+      realizedBalance: account.realizedBalance,
+      pendingIncome: account.pendingIncome,
+      pendingExpenses: account.pendingExpenses,
+      cards: [], debts: [],
+    });
+  }
+
+  for (const commitment of overview.commitments?.byAccount || []) {
+    const current = groups.get(commitment.key) || {
+      key: commitment.key,
+      name: commitment.name,
+      institution: commitment.institution,
+      paidIncome: 0,
+      paidExpenses: 0,
+      realizedBalance: 0,
+      pendingIncome: 0,
+      pendingExpenses: 0,
+      cards: [], debts: [],
+    };
+    current.cards = commitment.cards || [];
+    current.debts = commitment.debts || [];
+    groups.set(commitment.key, current);
+  }
+
+  const pendingByKey = new Map();
+  for (const item of overview.pendingItems || []) {
+    const key = item.account?.id || (item.card?.id ? `card:${item.card.id}` : '__sem_conta__');
+    const list = pendingByKey.get(key) || [];
+    list.push(item);
+    pendingByKey.set(key, list);
+  }
+
+  const lines = [overviewPeriodLabel(overview.period, overview.range), ''];
+  const ordered = [...groups.values()].sort((a, b) => {
+    const totalA = a.paidIncome + a.paidExpenses + a.pendingIncome + a.pendingExpenses
+      + a.cards.reduce((sum, card) => sum + card.totalOpen, 0)
+      + a.debts.reduce((sum, debt) => sum + debt.installmentOpen, 0);
+    const totalB = b.paidIncome + b.paidExpenses + b.pendingIncome + b.pendingExpenses
+      + b.cards.reduce((sum, card) => sum + card.totalOpen, 0)
+      + b.debts.reduce((sum, debt) => sum + debt.installmentOpen, 0);
+    return totalB - totalA;
+  });
+
+  for (const group of ordered) {
+    lines.push(String(group.name || 'Sem conta vinculada').toLocaleUpperCase('pt-BR'));
+    lines.push(`Realizado: receitas ${formatBRL(group.paidIncome)} · despesas ${formatBRL(group.paidExpenses)} · saldo ${formatBRL(group.realizedBalance)}`);
+
+    if (group.pendingExpenses > 0 || group.pendingIncome > 0) {
+      lines.push(`Pendências: despesas ${formatBRL(group.pendingExpenses)} · receitas ${formatBRL(group.pendingIncome)}`);
+      for (const item of (pendingByKey.get(group.key) || []).slice(0, 8)) {
+        lines.push(`• ${formatDateBR(item.date)} · ${item.description} · ${formatBRL(item.amount)}`);
+      }
+    } else {
+      lines.push('Pendências: nenhuma transação pendente.');
+    }
+
+    if (group.cards.length) {
+      lines.push('Faturas abertas:');
+      for (const card of group.cards.slice(0, 8)) {
+        const due = card.dueDate ? ` · vence em ${formatDateBR(card.dueDate)}` : '';
+        lines.push(`• ${card.name} · ${formatBRL(card.totalOpen)}${due}`);
+      }
+    }
+
+    if (group.debts.length) {
+      lines.push('Dívidas e financiamentos:');
+      for (const debt of group.debts.slice(0, 8)) {
+        const due = debt.dueDate ? ` · vence em ${formatDateBR(debt.dueDate)}` : '';
+        lines.push(`• ${debt.name} · parcela aberta ${formatBRL(debt.installmentOpen)} · saldo devedor ${formatBRL(debt.remaining)}${due}`);
+      }
+    }
+    lines.push('');
+  }
+
+  lines.push('TOTAL DO MÊS');
+  lines.push(`Realizado: receitas ${formatBRL(overview.income)} · despesas ${formatBRL(overview.expenses)} · saldo ${formatBRL(overview.balance)}`);
+  lines.push(`Transações pendentes: ${formatBRL(overview.pendingExpenses)} em despesas e ${formatBRL(overview.pendingIncome)} em receitas`);
+  lines.push(`Faturas abertas: ${formatBRL(overview.commitments?.totals?.cardInvoicesOpen || 0)}`);
+  lines.push(`Parcelas de dívidas em aberto: ${formatBRL(overview.commitments?.totals?.debtInstallmentsOpen || 0)}`);
+  lines.push(`Saldo devedor total das dívidas: ${formatBRL(overview.commitments?.totals?.activeDebtBalance || 0)}`);
+  lines.push('Faturas e parcelas aparecem separadas para não duplicar gastos já registrados.');
+  return lines.join('\n').trim();
 }
 
 function financialOverview(profile, args = {}, now = new Date()) {
@@ -862,6 +1158,12 @@ function financialOverview(profile, args = {}, now = new Date()) {
   const range = periodRange(args.period || 'month', now, { startDate: args.startDate, endDate: args.endDate });
   const accountBreakdown = buildAccountBreakdown(relevant);
   const orderedPending = sortPendingRecords(pending);
+  const currentMonth = currentMonthKey(now);
+  const requestedMonth = range.startKey ? String(range.startKey).slice(0, 7) : null;
+  const commitmentsApplicable = (args.period || 'month') === 'month' && requestedMonth === currentMonth;
+  const commitments = commitmentsApplicable
+    ? buildMonthlyCommitments(profile, now)
+    : { month: requestedMonth, openCardInvoices: [], openDebts: [], byAccount: [], totals: { cardInvoicesOpen: 0, debtInstallmentsOpen: 0, activeDebtBalance: 0 } };
 
   const overview = {
     period: args.period || 'month',
@@ -932,14 +1234,19 @@ function financialOverview(profile, args = {}, now = new Date()) {
       .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
       .slice(0, 10)
       .map(compactFinancialRecord),
+    commitmentsApplicable,
+    commitments,
   };
 
-  overview.suggestedResponse = buildSuggestedOverviewResponse(overview);
+  overview.suggestedResponse = buildSuggestedOverviewResponse(overview, false);
+  overview.suggestedCompleteResponse = buildSuggestedOverviewResponse(overview, true);
+  overview.suggestedCompleteByAccountResponse = buildCompleteByAccountResponse(overview);
   overview.responseGuidance = {
-    broadSummary: 'Para pedidos amplos como "resumo do mês atual", use suggestedResponse como base e não detalhe contas sem o usuário pedir.',
+    broadSummary: 'Para pedidos simples como "resumo do mês atual", use suggestedResponse como base.',
+    completeSummary: 'Quando o usuário pedir resumo completo, detalhado, tudo do mês ou separar Gui/Luh, use suggestedCompleteByAccountResponse como base; os dados também estão em commitments.byAccount, byAccount e pendingByAccount. Inclua faturas abertas e dívidas ativas.',
     pending: 'Quando houver pendências, sempre informe o total, a quantidade e os itens disponíveis em pendingItems, incluindo a conta quando existir.',
-    accounts: 'Nunca diga que pendências não podem ser separadas por conta; use pendingByAccount. Quando account for nulo, diga apenas "Sem conta vinculada".',
-    exclusions: 'Transferências, benefícios cobertos e pagamentos de fatura foram excluídos dos gastos realizados para evitar dupla contagem.',
+    accounts: 'Nunca diga que pendências não podem ser separadas por conta; use pendingByAccount. Para faturas e dívidas, use commitments.byAccount. Quando account for nulo, diga apenas "Sem conta vinculada".',
+    exclusions: 'Transferências, benefícios cobertos e pagamentos de fatura foram excluídos dos gastos realizados para evitar dupla contagem. Faturas abertas devem aparecer como compromisso, não como nova despesa.',
   };
 
   return overview;
@@ -1009,7 +1316,16 @@ function normalizeGoal(goal = {}) {
 }
 
 function normalizeDebt(debt = {}, lookup) {
-  const bank = resolveBank(debt, lookup);
+  const payments = (Array.isArray(debt?.payments) ? debt.payments : []).slice(-50).map(payment => ({
+    id: safeText(payment?.id, 120) || null,
+    amount: amountOf(payment),
+    date: transactionDateKey(payment) || null,
+    account: resolveBank(payment, lookup),
+    bankId: safeText(payment?.bankId || payment?.accountId, 120) || null,
+  }));
+  const explicitBank = resolveBank(debt, lookup);
+  const paymentBank = [...payments].reverse().find(payment => payment.account)?.account || null;
+  const bank = explicitBank || paymentBank;
   const total = asNumber(debt.total ?? debt.amount ?? debt.valor ?? debt.saldoDevedor ?? debt.balance);
   const paid = asNumber(debt.paid ?? debt.pago ?? debt.valorPago);
   return {
@@ -1020,10 +1336,15 @@ function normalizeDebt(debt = {}, lookup) {
     paid,
     remaining: Math.max(0, asNumber(debt.remaining ?? debt.restante ?? debt.balance ?? debt.saldoDevedor) || (total - paid)),
     installment: asNumber(debt.installment ?? debt.parcela ?? debt.installmentValue ?? debt.valorParcela),
-    installments: Math.trunc(asNumber(debt.installments ?? debt.parcelas)),
+    installments: Math.trunc(asNumber(debt.installments ?? debt.parcelas ?? debt.installmentsTotal ?? debt.parcelasTotal)),
+    installmentsPaid: Math.trunc(asNumber(debt.installmentsPaid ?? debt.parcelasPagas)),
+    startDate: transactionDateKey({ date: debt.startDate ?? debt.dataInicio }) || null,
+    dueDay: Math.trunc(asNumber(debt.dueDay ?? debt.diaVencimento ?? debt.vencimentoDia)) || null,
     dueDate: transactionDateKey({ date: debt.dueDate ?? debt.vencimento ?? debt.date }) || null,
+    lastPaidMonth: safeText(debt.lastPaidMonth, 7) || null,
     status: normalizeStatus(debt),
     account: bank,
+    payments,
     notes: safeText(debt.notes || debt.obs || debt.observacao, 300) || null,
   };
 }
@@ -1217,7 +1538,7 @@ const tools = [
   {
     type: 'function',
     name: 'get_financial_overview',
-    description: 'Calcula o resumo financeiro completo do período: receitas e despesas realizadas, saldo, projeção após pendências, pendências itemizadas e agrupadas por conta/categoria, lançamentos parciais e agrupamentos por conta, categoria e cartão. Use para pedidos como "resumo do mês atual". Exclui transferências, benefícios cobertos e pagamento de fatura para evitar dupla contagem.',
+    description: 'Calcula o resumo financeiro do período e, no mês atual, inclui contas pendentes, faturas de cartão em aberto, parcelas e saldo de dívidas, com agrupamento por conta/pessoa. Use suggestedResponse para resumo simples e suggestedCompleteResponse para pedidos completos ou detalhados. Exclui transferências, benefícios cobertos e pagamento de fatura dos gastos realizados para evitar dupla contagem.',
     strict: true,
     parameters: {
       type: 'object',
@@ -1469,6 +1790,7 @@ module.exports = {
   currentMonthKey,
   calculateRegisteredCardPurchases,
   buildAccountsAndCards,
+  buildMonthlyCommitments,
   buildLookup,
   collectTransactions,
   financialOverview,
