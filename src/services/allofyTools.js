@@ -412,7 +412,7 @@ function normalizeCardPurchase(item, lookup) {
     installments,
     installmentValue: Number(installmentValue.toFixed(2)),
     hasInterest: item?.temJuros === true || item?.hasInterest === true,
-    countsAsSpending: normalizeStatus(item) !== 'cancelled',
+    countsAsSpending: normalizeStatus(item) === 'paid',
     countsAsIncome: false,
   };
 }
@@ -639,31 +639,254 @@ function aggregate(records, selector) {
   return [...map.values()].sort((a, b) => b.total - a.total).slice(0, 20);
 }
 
+
+function financialRecordIsRelevant(record) {
+  return !record.isTransfer && !record.coveredByBenefit && !record.isInvoicePayment
+    && (record.type === 'income' || record.type === 'expense');
+}
+
+function accountDescriptor(record) {
+  if (record.account) {
+    return {
+      key: record.account.id || normalizeText(`${record.account.name} ${record.account.institution}`) || 'conta',
+      id: record.account.id || null,
+      name: record.account.name || record.account.institution || 'Conta',
+      institution: record.account.institution || null,
+      type: record.account.type || null,
+      unassigned: false,
+    };
+  }
+  if (record.card) {
+    return {
+      key: `card:${record.card.id || normalizeText(record.card.name) || 'cartao'}`,
+      id: null,
+      name: record.card.name ? `Cartão ${record.card.name}` : 'Compra no cartão',
+      institution: record.card.brand || null,
+      type: 'card',
+      unassigned: true,
+    };
+  }
+  return {
+    key: '__sem_conta__',
+    id: null,
+    name: 'Sem conta vinculada',
+    institution: null,
+    type: null,
+    unassigned: true,
+  };
+}
+
+function buildAccountBreakdown(records) {
+  const buckets = new Map();
+  for (const record of records) {
+    if (!financialRecordIsRelevant(record)) continue;
+    const descriptor = accountDescriptor(record);
+    const bucket = buckets.get(descriptor.key) || {
+      ...descriptor,
+      paidIncome: 0,
+      paidExpenses: 0,
+      realizedBalance: 0,
+      pendingIncome: 0,
+      pendingExpenses: 0,
+      partialIncome: 0,
+      partialExpenses: 0,
+      totalRecords: 0,
+      paidRecords: 0,
+      pendingRecords: 0,
+      partialRecords: 0,
+    };
+    bucket.totalRecords += 1;
+    if (record.status === 'paid') {
+      if (record.type === 'income') bucket.paidIncome += record.amount;
+      if (record.type === 'expense') bucket.paidExpenses += record.amount;
+      bucket.paidRecords += 1;
+    } else if (record.status === 'pending') {
+      if (record.type === 'income') bucket.pendingIncome += record.amount;
+      if (record.type === 'expense') bucket.pendingExpenses += record.amount;
+      bucket.pendingRecords += 1;
+    } else if (record.status === 'partial') {
+      if (record.type === 'income') bucket.partialIncome += record.amount;
+      if (record.type === 'expense') bucket.partialExpenses += record.amount;
+      bucket.partialRecords += 1;
+    }
+    bucket.realizedBalance = bucket.paidIncome - bucket.paidExpenses;
+    buckets.set(descriptor.key, bucket);
+  }
+
+  return [...buckets.values()]
+    .map(bucket => ({
+      ...bucket,
+      paidIncome: Number(bucket.paidIncome.toFixed(2)),
+      paidExpenses: Number(bucket.paidExpenses.toFixed(2)),
+      realizedBalance: Number(bucket.realizedBalance.toFixed(2)),
+      pendingIncome: Number(bucket.pendingIncome.toFixed(2)),
+      pendingExpenses: Number(bucket.pendingExpenses.toFixed(2)),
+      partialIncome: Number(bucket.partialIncome.toFixed(2)),
+      partialExpenses: Number(bucket.partialExpenses.toFixed(2)),
+    }))
+    .sort((a, b) => {
+      const totalA = a.paidIncome + a.paidExpenses + a.pendingIncome + a.pendingExpenses;
+      const totalB = b.paidIncome + b.paidExpenses + b.pendingIncome + b.pendingExpenses;
+      return totalB - totalA;
+    })
+    .slice(0, 30);
+}
+
+function compactFinancialRecord(record) {
+  return {
+    id: record.id,
+    description: record.description,
+    amount: record.amount,
+    type: record.type,
+    date: record.date,
+    status: record.status,
+    category: record.category ? {
+      id: record.category.id || null,
+      name: record.category.name || 'Outros',
+      emoji: record.category.emoji || '🏷️',
+    } : null,
+    account: record.account ? {
+      id: record.account.id || null,
+      name: record.account.name || record.account.institution || 'Conta',
+      institution: record.account.institution || null,
+      type: record.account.type || null,
+    } : null,
+    card: record.card ? {
+      id: record.card.id || null,
+      name: record.card.name || 'Cartão',
+      brand: record.card.brand || null,
+      last4: record.card.last4 || null,
+    } : null,
+  };
+}
+
+function sortPendingRecords(records) {
+  return [...records].sort((a, b) => {
+    const dateCompare = String(a.date || '9999-12-31').localeCompare(String(b.date || '9999-12-31'));
+    if (dateCompare !== 0) return dateCompare;
+    return b.amount - a.amount;
+  });
+}
+
+function formatBRL(value) {
+  return Number(value || 0).toLocaleString('pt-BR', {
+    style: 'currency',
+    currency: 'BRL',
+    minimumFractionDigits: 2,
+    maximumFractionDigits: 2,
+  });
+}
+
+function formatDateBR(iso) {
+  const match = String(iso || '').match(/^(\d{4})-(\d{2})-(\d{2})$/);
+  return match ? `${match[3]}/${match[2]}` : '';
+}
+
+function overviewPeriodLabel(period, range) {
+  if (period === 'month' && range?.start) {
+    const date = parseDateValue(range.start);
+    if (date) {
+      const label = new Intl.DateTimeFormat('pt-BR', { month: 'long', year: 'numeric' }).format(date);
+      return `Resumo de ${label}`;
+    }
+  }
+  if (period === 'year' && range?.start) return `Resumo de ${String(range.start).slice(0, 4)}`;
+  if (range?.start && range?.end) return `Resumo de ${formatDateBR(range.start)} a ${formatDateBR(range.end)}`;
+  return 'Resumo financeiro';
+}
+
+function buildSuggestedOverviewResponse(overview) {
+  const lines = [
+    `**${overviewPeriodLabel(overview.period, overview.range)}**`,
+    '',
+    '**Realizado**',
+    `- Receitas: **${formatBRL(overview.income)}**`,
+    `- Despesas: **${formatBRL(overview.expenses)}**`,
+    `- Saldo: **${formatBRL(overview.balance)}**`,
+  ];
+
+  if (overview.pendingExpenses > 0 || overview.pendingIncome > 0) {
+    lines.push('', '**Pendências do período**');
+    if (overview.pendingExpenses > 0) {
+      lines.push(`- Despesas pendentes: **${formatBRL(overview.pendingExpenses)}** em ${overview.counts.pendingExpenses} lançamento(s)`);
+    }
+    if (overview.pendingIncome > 0) {
+      lines.push(`- Receitas pendentes: **${formatBRL(overview.pendingIncome)}** em ${overview.counts.pendingIncome} lançamento(s)`);
+    }
+
+    const items = overview.pendingItems.slice(0, 5);
+    for (const item of items) {
+      const date = formatDateBR(item.date);
+      const account = item.account?.name || item.card?.name || 'Sem conta vinculada';
+      const prefix = [date, item.description].filter(Boolean).join(' — ');
+      lines.push(`  - ${prefix}: ${formatBRL(item.amount)} (${account})`);
+    }
+    if (overview.pendingItems.length > items.length) {
+      lines.push(`  - Mais ${overview.pendingItems.length - items.length} pendência(s) no período.`);
+    }
+
+    lines.push(`- Saldo projetado após pendências: **${formatBRL(overview.projectedBalance)}**`);
+  } else {
+    lines.push('', '- Não há receitas nem despesas pendentes neste período.');
+  }
+
+  if (overview.partialExpenses > 0 || overview.partialIncome > 0) {
+    lines.push('', `- Lançamentos parciais: receitas ${formatBRL(overview.partialIncome)} e despesas ${formatBRL(overview.partialExpenses)}.`);
+  }
+
+  return lines.join('\n');
+}
+
 function financialOverview(profile, args = {}, now = new Date()) {
   const { items } = collectTransactions(profile);
   const inRange = items.filter(record => recordMatchesPeriod(record, args, now));
-  const paidIncome = inRange.filter(record => record.countsAsIncome);
-  const paidExpenses = inRange.filter(record => record.countsAsSpending);
-  const pending = inRange.filter(record => record.status === 'pending');
+  const relevant = inRange.filter(financialRecordIsRelevant);
+
+  const paidIncome = relevant.filter(record => record.countsAsIncome);
+  const paidExpenses = relevant.filter(record => record.countsAsSpending);
+  const pending = relevant.filter(record => record.status === 'pending');
+  const partial = relevant.filter(record => record.status === 'partial');
+  const cancelled = inRange.filter(record => record.status === 'cancelled');
+
+  const pendingIncomeRecords = pending.filter(record => record.type === 'income');
+  const pendingExpenseRecords = pending.filter(record => record.type === 'expense');
+  const partialIncomeRecords = partial.filter(record => record.type === 'income');
+  const partialExpenseRecords = partial.filter(record => record.type === 'expense');
 
   const income = paidIncome.reduce((sum, record) => sum + record.amount, 0);
   const expenses = paidExpenses.reduce((sum, record) => sum + record.amount, 0);
+  const pendingIncome = pendingIncomeRecords.reduce((sum, record) => sum + record.amount, 0);
+  const pendingExpenses = pendingExpenseRecords.reduce((sum, record) => sum + record.amount, 0);
+  const partialIncome = partialIncomeRecords.reduce((sum, record) => sum + record.amount, 0);
+  const partialExpenses = partialExpenseRecords.reduce((sum, record) => sum + record.amount, 0);
   const range = periodRange(args.period || 'month', now, { startDate: args.startDate, endDate: args.endDate });
+  const accountBreakdown = buildAccountBreakdown(relevant);
+  const orderedPending = sortPendingRecords(pending);
 
-  return {
+  const overview = {
     period: args.period || 'month',
     range: { start: range.startKey, end: range.endKey },
     income: Number(income.toFixed(2)),
     expenses: Number(expenses.toFixed(2)),
     balance: Number((income - expenses).toFixed(2)),
-    pendingIncome: Number(pending.filter(record => record.type === 'income').reduce((sum, record) => sum + record.amount, 0).toFixed(2)),
-    pendingExpenses: Number(pending.filter(record => record.type === 'expense').reduce((sum, record) => sum + record.amount, 0).toFixed(2)),
+    pendingIncome: Number(pendingIncome.toFixed(2)),
+    pendingExpenses: Number(pendingExpenses.toFixed(2)),
+    partialIncome: Number(partialIncome.toFixed(2)),
+    partialExpenses: Number(partialExpenses.toFixed(2)),
+    projectedBalance: Number((income - expenses + pendingIncome - pendingExpenses).toFixed(2)),
     counts: {
       totalRecords: inRange.length,
+      relevantRecords: relevant.length,
       paidIncome: paidIncome.length,
       paidExpenses: paidExpenses.length,
       pending: pending.length,
+      pendingIncome: pendingIncomeRecords.length,
+      pendingExpenses: pendingExpenseRecords.length,
+      partial: partial.length,
+      cancelled: cancelled.length,
       transfers: inRange.filter(record => record.isTransfer).length,
+      benefitCovered: inRange.filter(record => record.coveredByBenefit).length,
+      invoicePayments: inRange.filter(record => record.isInvoicePayment).length,
       cardPurchases: inRange.filter(record => record.kind === 'card_purchase').length,
     },
     byCategory: aggregate(paidExpenses, record => ({
@@ -671,17 +894,55 @@ function financialOverview(profile, args = {}, now = new Date()) {
       name: record.category?.name || 'Outros',
       emoji: record.category?.emoji || '🏷️',
     })),
-    byAccount: aggregate([...paidIncome, ...paidExpenses].filter(record => record.account), record => ({
-      key: record.account.id,
-      name: record.account.name,
-      institution: record.account.institution,
+    pendingByCategory: aggregate(pendingExpenseRecords, record => ({
+      key: record.category?.id || record.category?.name || 'outros',
+      name: record.category?.name || 'Outros',
+      emoji: record.category?.emoji || '🏷️',
     })),
+    byAccount: accountBreakdown,
+    paidByAccount: aggregate([...paidIncome, ...paidExpenses], record => {
+      const descriptor = accountDescriptor(record);
+      return {
+        key: descriptor.key,
+        name: descriptor.name,
+        institution: descriptor.institution,
+        unassigned: descriptor.unassigned,
+      };
+    }),
+    pendingByAccount: accountBreakdown
+      .filter(account => account.pendingIncome > 0 || account.pendingExpenses > 0)
+      .map(account => ({
+        key: account.key,
+        id: account.id,
+        name: account.name,
+        institution: account.institution,
+        unassigned: account.unassigned,
+        pendingIncome: account.pendingIncome,
+        pendingExpenses: account.pendingExpenses,
+        pendingRecords: account.pendingRecords,
+      })),
     byCard: aggregate(paidExpenses.filter(record => record.card), record => ({
       key: record.card.id,
       name: record.card.name,
       brand: record.card.brand,
     })),
+    pendingItems: orderedPending.slice(0, 30).map(compactFinancialRecord),
+    partialItems: sortPendingRecords(partial).slice(0, 20).map(compactFinancialRecord),
+    recentPaidExpenses: [...paidExpenses]
+      .sort((a, b) => String(b.date || '').localeCompare(String(a.date || '')))
+      .slice(0, 10)
+      .map(compactFinancialRecord),
   };
+
+  overview.suggestedResponse = buildSuggestedOverviewResponse(overview);
+  overview.responseGuidance = {
+    broadSummary: 'Para pedidos amplos como "resumo do mês atual", use suggestedResponse como base e não detalhe contas sem o usuário pedir.',
+    pending: 'Quando houver pendências, sempre informe o total, a quantidade e os itens disponíveis em pendingItems, incluindo a conta quando existir.',
+    accounts: 'Nunca diga que pendências não podem ser separadas por conta; use pendingByAccount. Quando account for nulo, diga apenas "Sem conta vinculada".',
+    exclusions: 'Transferências, benefícios cobertos e pagamentos de fatura foram excluídos dos gastos realizados para evitar dupla contagem.',
+  };
+
+  return overview;
 }
 
 function filterRecords(records, args = {}) {
@@ -956,7 +1217,7 @@ const tools = [
   {
     type: 'function',
     name: 'get_financial_overview',
-    description: 'Calcula receitas pagas, despesas efetivas, saldo, pendências e agrupamentos por categoria, conta e cartão. Exclui transferências, benefícios cobertos e pagamento de fatura para evitar dupla contagem.',
+    description: 'Calcula o resumo financeiro completo do período: receitas e despesas realizadas, saldo, projeção após pendências, pendências itemizadas e agrupadas por conta/categoria, lançamentos parciais e agrupamentos por conta, categoria e cartão. Use para pedidos como "resumo do mês atual". Exclui transferências, benefícios cobertos e pagamento de fatura para evitar dupla contagem.',
     strict: true,
     parameters: {
       type: 'object',
