@@ -124,3 +124,48 @@ test('atividade da conta inclui transações e conciliações', () => {
   assert.equal(result.activities.length, 2);
   assert.ok(result.activities.some(item => item.kind === 'balance_adjustment'));
 });
+
+test('resumo mensal agrupa despesas pendentes por conta e lista os itens', () => {
+  const profile = {
+    banks: [
+      { id: 'luh', name: 'Nubank', accountName: 'Nubank Luh', balance: 0 },
+      { id: 'gui', name: 'Nubank', accountName: 'Nubank Gui', balance: 0 },
+    ],
+    categories: [
+      { id: 'cartao', name: 'Cartão' },
+      { id: 'pessoal', name: 'Pessoal' },
+    ],
+    transactions: [
+      { id: 'paid', description: 'Compra', amount: 15, type: 'expense', date: '2026-08-03', category: 'cartao', bankId: 'luh', status: 'paid' },
+      { id: 'pending1', description: 'Psicóloga', amount: 100, type: 'expense', date: '2026-08-20', category: 'pessoal', bankId: 'luh', status: 'pending' },
+      { id: 'pending2', description: 'Palio', amount: 200, type: 'expense', date: '2026-08-20', category: 'pessoal', bankId: 'luh', status: 'pending' },
+      { id: 'pending3', description: 'Vivo', amount: 75.34, type: 'expense', date: '2026-08-20', category: 'pessoal', bankId: 'gui', status: 'pending' },
+    ],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.expenses, 15);
+  assert.equal(overview.pendingExpenses, 375.34);
+  assert.equal(overview.counts.pendingExpenses, 3);
+  assert.equal(overview.pendingItems.length, 3);
+  assert.equal(overview.pendingItems[0].account.name, 'Nubank Luh');
+  const luh = overview.pendingByAccount.find(item => item.name === 'Nubank Luh');
+  const gui = overview.pendingByAccount.find(item => item.name === 'Nubank Gui');
+  assert.equal(luh.pendingExpenses, 300);
+  assert.equal(gui.pendingExpenses, 75.34);
+  assert.match(overview.suggestedResponse, /Despesas pendentes/);
+  assert.match(overview.suggestedResponse, /Psicóloga/);
+  assert.match(overview.suggestedResponse, /Nubank Luh/);
+});
+
+test('compra de cartão pendente não entra nas despesas realizadas', () => {
+  const profile = {
+    cards: [{ id: 'c1', name: 'Cartão Gui', brand: 'Mastercard' }],
+    cardTransactions: [
+      { id: 'cp1', descricao: 'Compra futura', valorTotal: 90, dataCompra: '2026-08-10', cardId: 'c1', status: 'pending' },
+    ],
+  };
+  const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null }, new Date(2026, 7, 4));
+  assert.equal(overview.expenses, 0);
+  assert.equal(overview.pendingExpenses, 90);
+  assert.equal(overview.pendingItems[0].card.name, 'Cartão Gui');
+});
