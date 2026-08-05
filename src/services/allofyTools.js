@@ -1,3 +1,4 @@
+const { hydrateProfile } = require('./v39ProfileService');
 const PERIODS = [
   'today', 'yesterday', 'last_7_days', 'last_30_days',
   'month', 'last_month', 'quarter', 'year', 'all', 'custom',
@@ -2078,9 +2079,7 @@ const tools = [
 ];
 
 async function loadProfile(uid) {
-  const snap = await database().collection('users').doc(uid).get();
-  if (!snap.exists) throw new Error('Perfil financeiro não encontrado');
-  return snap.data() || {};
+  return hydrateProfile(uid);
 }
 
 function appCapabilities() {

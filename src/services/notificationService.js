@@ -1,3 +1,4 @@
+const { hydrateProfile } = require('./v39ProfileService');
 const crypto = require('crypto');
 const { buildAccountsAndCards, asNumber } = require('./allofyTools');
 
@@ -477,7 +478,10 @@ async function runNotificationCycle(now = new Date()) {
 
   for (const doc of snapshot.docs) {
     try {
-      sent += await processUserNotifications(doc.id, doc.data() || {}, now);
+      const profile = await hydrateProfile(doc.id, doc.data() || {}, [
+        'transactions', 'banks', 'cards', 'cardTransactions', 'debts', 'benefits'
+      ]);
+      sent += await processUserNotifications(doc.id, profile, now);
     } catch (error) {
       failures += 1;
       console.warn(`Notification cycle error (${doc.id}):`, error.message);

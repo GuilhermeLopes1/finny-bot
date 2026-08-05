@@ -7,6 +7,8 @@
 const { getDb, admin } = require('../config/firebase');
 const { getMonthRange, getLastMonthRange } = require('../utils/dateUtils');
 const logger = require('../utils/logger');
+const { dateKey: saoPauloDateKey } = require('../utils/saoPaulo');
+const { hydrateProfile, migrateLegacyProfileV39 } = require('./v39ProfileService');
 
 const COLLECTIONS = {
   USERS: 'users',
@@ -74,30 +76,28 @@ async function updateUser(userId, data) {
 async function saveTransaction(userId, transaction) {
   const db = getDb();
   const userRef = db.collection(COLLECTIONS.USERS).doc(userId);
+  const rootSnap = await userRef.get();
+  const profile = rootSnap.data() || {};
+  if (Number(profile.dataSchemaVersion || 0) < 39) await migrateLegacyProfileV39(userId, profile);
 
-  // ✅ FIX: store date as ISO string consistently
   const now = new Date();
+  const id = Date.now().toString();
   const txData = {
-    id: Date.now().toString(),
+    id,
     type: transaction.type,
     amount: parseFloat(transaction.amount),
     description: transaction.description || '',
     category: transaction.category || 'outros',
-    date: now.toISOString(),       // always ISO string
-    createdAt: now.toISOString(),  // always ISO string
+    date: saoPauloDateKey(now),
+    createdAt: now.toISOString(),
     source: 'whatsapp',
+    _v39Order: now.getTime(),
   };
-
-  const doc = await userRef.get();
-  const current = doc.data() || {};
-  const transactions = current.transactions || [];
-
-  transactions.push(txData);
-
-  await userRef.set({ transactions }, { merge: true });
-
-  console.log('✅ Transação salva:', txData);
-  return txData;
+  await userRef.collection('transactions').doc(id).set(txData, { merge: false });
+  const publicData = { ...txData };
+  delete publicData._v39Order;
+  logger.info(`Transação V39 salva para ${userId}`);
+  return publicData;
 }
 
 /**
@@ -106,27 +106,30 @@ async function saveTransaction(userId, transaction) {
 async function saveTransactionsBatch(userId, transactionList) {
   const db = getDb();
   const userRef = db.collection(COLLECTIONS.USERS).doc(userId);
+  const rootSnap = await userRef.get();
+  const profile = rootSnap.data() || {};
+  if (Number(profile.dataSchemaVersion || 0) < 39) await migrateLegacyProfileV39(userId, profile);
 
   const now = new Date();
-  const newTxs = transactionList.map((t, i) => ({
-    id: (Date.now() + i).toString(),
-    type: t.type,
-    amount: parseFloat(t.amount),
-    description: t.description || '',
-    category: t.category || 'outros',
-    date: now.toISOString(),
+  const newTxs = transactionList.map((item, index) => ({
+    id: (Date.now() + index).toString(),
+    type: item.type,
+    amount: parseFloat(item.amount),
+    description: item.description || '',
+    category: item.category || 'outros',
+    date: saoPauloDateKey(now),
     createdAt: now.toISOString(),
     source: 'whatsapp',
+    _v39Order: now.getTime() + index,
   }));
-
-  const doc = await userRef.get();
-  const current = doc.data() || {};
-  const transactions = [...(current.transactions || []), ...newTxs];
-
-  await userRef.set({ transactions }, { merge: true });
-
-  console.log(`✅ ${newTxs.length} transações salvas em batch`);
-  return newTxs;
+  for (let offset = 0; offset < newTxs.length; offset += 400) {
+    const batch = db.batch();
+    newTxs.slice(offset, offset + 400).forEach(item => {
+      batch.set(userRef.collection('transactions').doc(item.id), item, { merge: false });
+    });
+    await batch.commit();
+  }
+  return newTxs.map(item => { const value = { ...item }; delete value._v39Order; return value; });
 }
 
 /**
@@ -136,56 +139,29 @@ async function saveTransactionsBatch(userId, transactionList) {
  *    or ISO strings.
  */
 async function queryTransactions(userId, filters = {}) {
-  const db = getDb();
+  const profile = await hydrateProfile(userId, null, ['transactions']);
+  let transactions = Array.isArray(profile.transactions) ? profile.transactions : [];
 
-  const userDoc = await db.collection(COLLECTIONS.USERS).doc(userId).get();
-  const data = userDoc.data() || {};
-  let transactions = data.transactions || [];
+  if (filters.type) transactions = transactions.filter(item => item.type === filters.type);
+  if (filters.category) transactions = transactions.filter(item => item.category === filters.category);
 
-  console.log(`🔍 queryTransactions | userId=${userId} | total no doc=${transactions.length} | filters=`, filters);
-
-  // filter by type
-  if (filters.type) {
-    transactions = transactions.filter(t => t.type === filters.type);
-  }
-
-  // filter by category
-  if (filters.category) {
-    transactions = transactions.filter(t => t.category === filters.category);
-  }
-
-  // ✅ FIX: convert everything to ms timestamps before comparing
-  if (filters.startDate || filters.endDate) {
-    // Safely convert any date representation to ms timestamp
-    const toMs = (d) => {
-      if (!d) return null;
-      if (typeof d === 'number') return d;
-      if (d instanceof Date) return d.getTime();
-      // Firestore Timestamp object
-      if (typeof d.toDate === 'function') return d.toDate().getTime();
-      // ISO string or any parseable string
-      return new Date(d).getTime();
-    };
-
-    const startMs = toMs(filters.startDate);
-    const endMs   = toMs(filters.endDate);
-
-    transactions = transactions.filter(t => {
-      // t.date is always stored as ISO string
-      const txMs = new Date(t.date).getTime();
-
-      if (isNaN(txMs)) {
-        console.warn('⚠️ Transação com data inválida ignorada:', t);
-        return false;
-      }
-
-      const afterStart = startMs !== null ? txMs >= startMs : true;
-      const beforeEnd  = endMs   !== null ? txMs <= endMs   : true;
-      return afterStart && beforeEnd;
+  const valueDateKey = value => {
+    if (!value) return '';
+    if (value?.toDate) return saoPauloDateKey(value.toDate());
+    const raw = String(value);
+    const civil = raw.match(/^(\d{4}-\d{2}-\d{2})(?:$|T)/);
+    if (civil && raw.length === 10) return civil[1];
+    const parsed = value instanceof Date ? value : new Date(value);
+    return Number.isNaN(parsed.getTime()) ? (civil?.[1] || '') : saoPauloDateKey(parsed);
+  };
+  const startKey = valueDateKey(filters.startDate);
+  const endKey = valueDateKey(filters.endDate);
+  if (startKey || endKey) {
+    transactions = transactions.filter(item => {
+      const key = valueDateKey(item.date || item.createdAt);
+      return key && (!startKey || key >= startKey) && (!endKey || key <= endKey);
     });
   }
-
-  console.log(`🔍 Após filtros: ${transactions.length} transações`);
   return transactions;
 }
 
