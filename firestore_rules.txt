@@ -3,22 +3,72 @@ service cloud.firestore {
   match /databases/{database}/documents {
     function signedIn() { return request.auth != null; }
     function isOwner(uid) { return signedIn() && request.auth.uid == uid; }
-    function isAdmin() {
-      return signedIn() && get(/databases/$(database)/documents/users/$(request.auth.uid)).data.role == 'admin';
-    }
+    function userData() { return get(/databases/$(database)/documents/users/$(request.auth.uid)).data; }
+    function isAdmin() { return signedIn() && (userData().role == 'admin' || userData().isAdmin == true); }
     function protectedUserFields() {
-      return ['role','isAdmin','banned','isPro','isMotorista','proPlan','proSince','proExpiresAt','motoristaExpiresAt','proCancelled','proSubscriptionId','referralProcessed','referredBy','referralCount'];
+      return [
+        'role','isAdmin','banned','isPro','isMotorista','proPlan','proSince','proExpiresAt',
+        'motoristaExpiresAt','proCancelled','proCancelledAt','proSubscriptionId',
+        'proSubscriptionStatus','proPaymentId','proDaysLeft','proExpired','proExpiredAt',
+        'proAwardedBy','proAwardMonth','proPrizeDays','referralProcessed','referredBy',
+        'referralCount','alloPoints','apLastLogin','apStreak','apStreakLastDate'
+      ];
+    }
+    function legacyFinancialFields() {
+      return [
+        'transactions','banks','cards','categories','goals','debts','benefits',
+        'calculatorSimulations','importHistory','cofres','uberJornadas','uberCorridas',
+        'uberGastos','uberAbastec','uberVeiculos','cardTransactions'
+      ];
+    }
+    function migrationAffectedFields() {
+      return [
+        'transactions','banks','cards','categories','goals','debts','benefits',
+        'calculatorSimulations','importHistory','cofres','uberJornadas','uberCorridas',
+        'uberGastos','uberAbastec','uberVeiculos','cardTransactions',
+        'dataSchemaVersion','dataMigratedAt','updatedAt'
+      ];
+    }
+    function ownerUserUpdateIsSafe() {
+      let affected = request.resource.data.diff(resource.data).affectedKeys();
+      let normalUpdate = !affected.hasAny(legacyFinancialFields());
+      let completedMigration = affected.hasOnly(migrationAffectedFields())
+        && request.resource.data.dataSchemaVersion == 39
+        && !request.resource.data.keys().hasAny(legacyFinancialFields());
+      return !affected.hasAny(protectedUserFields()) && (normalUpdate || completedMigration);
     }
 
     match /users/{userId} {
       allow read: if isOwner(userId) || isAdmin();
-      allow create: if isOwner(userId) && !request.resource.data.keys().hasAny(protectedUserFields());
-      allow update: if isAdmin() || (isOwner(userId) && !request.resource.data.diff(resource.data).affectedKeys().hasAny(protectedUserFields()));
+      allow create: if isOwner(userId)
+        && !request.resource.data.keys().hasAny(protectedUserFields())
+        && !request.resource.data.keys().hasAny(legacyFinancialFields());
+      allow update: if isAdmin() || (isOwner(userId) && ownerUserUpdateIsSafe());
       allow delete: if isAdmin();
 
-      match /{document=**} {
-        allow read, write: if isOwner(userId) || isAdmin();
+      match /ap_history/{documentId} {
+        allow read: if isOwner(userId) || isAdmin();
+        allow write: if false;
       }
+      match /notification_dispatches/{documentId} {
+        allow read, write: if false;
+      }
+      match /transactions/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /banks/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /cards/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /categories/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /goals/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /debts/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /benefits/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /calculatorSimulations/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /importHistory/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /cofres/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /uberJornadas/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /uberCorridas/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /uberGastos/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /uberAbastec/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /uberVeiculos/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /cardTransactions/{documentId} { allow read, write: if isOwner(userId) || isAdmin(); }
     }
 
     match /settings/{document} {
@@ -30,8 +80,7 @@ service cloud.firestore {
       allow write: if isAdmin();
     }
     match /admin_messages/{document} {
-      allow read: if signedIn();
-      allow write: if isAdmin();
+      allow read, write: if isAdmin();
     }
     match /admin_logs/{document} {
       allow read, create: if isAdmin();
@@ -40,24 +89,37 @@ service cloud.firestore {
 
     match /support/{userId} {
       allow read, write: if isOwner(userId) || isAdmin();
-      match /messages/{messageId} {
-        allow read, write: if isOwner(userId) || isAdmin();
+      match /messages/{messageId} { allow read, write: if isOwner(userId) || isAdmin(); }
+      match /tickets/{ticketId} {
+        allow read, create: if isOwner(userId) || isAdmin();
+        allow update: if isAdmin() || (
+          isOwner(userId) &&
+          request.resource.data.diff(resource.data).affectedKeys().hasOnly(['status','updatedAt']) &&
+          request.resource.data.status == 'waiting_support'
+        );
+        allow delete: if isAdmin();
       }
     }
 
     match /referrals/{code} {
       allow read: if signedIn();
-      allow create, update: if signedIn() && request.resource.data.userId == request.auth.uid;
+      allow create: if signedIn() && !exists(/databases/$(database)/documents/referrals/$(code)) && request.resource.data.userId == request.auth.uid;
+      allow update: if signedIn() && resource.data.userId == request.auth.uid && request.resource.data.userId == request.auth.uid;
       allow delete: if isAdmin();
     }
 
-    match /ap_ranking/{month}/users/{userId} {
+    match /ap_ranking/{month} {
       allow read: if signedIn();
-      allow write: if isOwner(userId) || isAdmin();
+      allow write: if false;
+      match /users/{userId} {
+        allow read: if signedIn();
+        allow write: if false;
+      }
     }
 
-    match /{document=**} {
-      allow read, write: if false;
-    }
+    match /mp_webhook_events/{document} { allow read, write: if false; }
+    match /notification_devices/{document} { allow read, write: if false; }
+    match /allofy_conversations/{document=**} { allow read, write: if false; }
+    match /{document=**} { allow read, write: if false; }
   }
 }
