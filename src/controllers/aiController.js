@@ -2,6 +2,7 @@ const pdfParse = require('pdf-parse');
 const { createStructuredResponse } = require('../config/openai');
 const { summarizeTransactions, asNumber } = require('../services/allofyTools');
 const logger = require('../utils/logger');
+const { dateKey: saoPauloDateKey } = require('../utils/saoPaulo');
 
 const IMPORT_SCHEMA = {
   type: 'object', additionalProperties: false,
@@ -66,7 +67,7 @@ function importContext(req) {
     fileName: String(req.file?.originalname || req.body?.fileName || '').slice(0, 180),
     referenceMonth: /^\d{4}-\d{2}$/.test(String(req.body?.referenceMonth || '')) ? String(req.body.referenceMonth) : null,
     selectedCard: selectedCard && typeof selectedCard === 'object' ? selectedCard : null,
-    currentDate: new Date().toISOString().slice(0, 10),
+    currentDate: saoPauloDateKey(),
   };
 }
 
