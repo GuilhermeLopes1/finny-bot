@@ -1,130 +1,83 @@
-
 /**
- * Date utilities with Brazilian Portuguese support
- * ✅ FIX: all ranges use UTC boundaries to match ISO strings saved in Firestore
- * Brazil = UTC-3, so server-side "local time" ranges would miss transactions
- * saved at certain hours. Using UTC month boundaries is consistent and safe.
+ * Utilitários de data civil no fuso oficial do aplicativo.
+ * Datas financeiras são interpretadas em America/Sao_Paulo para que um
+ * lançamento feito à noite não seja deslocado para o dia seguinte por UTC.
  */
+const { dateKey, partsInSaoPaulo, daysInMonth } = require('./saoPaulo');
 
-/**
- * Get start and end of today in UTC
- */
-function getTodayRange() {
-  const now = new Date();
-  const start = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 0, 0, 0, 0));
-  const end   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
-  return { start, end };
+function keyFromParts(year, month, day) {
+  return `${year}-${String(month).padStart(2, '0')}-${String(day).padStart(2, '0')}`;
 }
 
-/**
- * Get start and end of current week (Mon–Sun) in UTC
- */
-function getWeekRange() {
-  const now = new Date();
-  const dayOfWeek = now.getUTCDay(); // 0=Sun
-  const diffToMonday = dayOfWeek === 0 ? -6 : 1 - dayOfWeek;
-
-  const monday = new Date(now);
-  monday.setUTCDate(now.getUTCDate() + diffToMonday);
-
-  const start = new Date(Date.UTC(monday.getUTCFullYear(), monday.getUTCMonth(), monday.getUTCDate(), 0, 0, 0, 0));
-  const end   = new Date(Date.UTC(now.getUTCFullYear(), now.getUTCMonth(), now.getUTCDate(), 23, 59, 59, 999));
-  return { start, end };
+function shiftDateKey(key, days) {
+  const [year, month, day] = String(key).split('-').map(Number);
+  const value = new Date(Date.UTC(year, month - 1, day + days, 12));
+  return keyFromParts(value.getUTCFullYear(), value.getUTCMonth() + 1, value.getUTCDate());
 }
 
-/**
- * Get start and end of current month in UTC
- * ✅ FIX: uses UTC methods — avoids UTC vs local timezone mismatch
- */
-function getMonthRange() {
-  const now = new Date();
-  const year  = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-
-  const start = new Date(Date.UTC(year, month, 1, 0, 0, 0, 0));
-  // Day 0 of next month = last day of current month
-  const end   = new Date(Date.UTC(year, month + 1, 0, 23, 59, 59, 999));
-  return { start, end };
+// O Brasil não usa horário de verão desde 2019; a base do aplicativo é atual.
+function civilRange(key) {
+  return {
+    start: new Date(`${key}T00:00:00.000-03:00`),
+    end: new Date(`${key}T23:59:59.999-03:00`),
+  };
 }
 
-/**
- * Get start and end of last month in UTC
- */
-function getLastMonthRange() {
-  const now = new Date();
-  const year  = now.getUTCFullYear();
-  const month = now.getUTCMonth();
-
-  const start = new Date(Date.UTC(year, month - 1, 1, 0, 0, 0, 0));
-  const end   = new Date(Date.UTC(year, month, 0, 23, 59, 59, 999));
-  return { start, end };
+function getTodayRange(now = new Date()) {
+  return civilRange(dateKey(now));
 }
 
-/**
- * Parse date references from Brazilian Portuguese text
- */
+function getWeekRange(now = new Date()) {
+  const today = dateKey(now);
+  const weekday = new Date(`${today}T12:00:00Z`).getUTCDay();
+  const diffToMonday = weekday === 0 ? -6 : 1 - weekday;
+  const startKey = shiftDateKey(today, diffToMonday);
+  return { start: civilRange(startKey).start, end: civilRange(today).end };
+}
+
+function getMonthRange(now = new Date()) {
+  const { year, month } = partsInSaoPaulo(now);
+  const startKey = keyFromParts(year, month, 1);
+  const endKey = keyFromParts(year, month, daysInMonth(year, month));
+  return { start: civilRange(startKey).start, end: civilRange(endKey).end };
+}
+
+function getLastMonthRange(now = new Date()) {
+  const { year, month } = partsInSaoPaulo(now);
+  const anchor = new Date(Date.UTC(year, month - 2, 15, 12));
+  const previousYear = anchor.getUTCFullYear();
+  const previousMonth = anchor.getUTCMonth() + 1;
+  const startKey = keyFromParts(previousYear, previousMonth, 1);
+  const endKey = keyFromParts(previousYear, previousMonth, daysInMonth(previousYear, previousMonth));
+  return { start: civilRange(startKey).start, end: civilRange(endKey).end };
+}
+
 function parseDateReference(text) {
-  const t = text.toLowerCase();
-
-  if (/hoje|agora/.test(t))                           return getTodayRange();
-  if (/essa semana|esta semana|semana/.test(t))        return getWeekRange();
-  if (/esse mês|este mês|mês/.test(t))                return getMonthRange();
-  if (/mês passado|último mês/.test(t))               return getLastMonthRange();
-  if (/ontem/.test(t)) {
-    const now = new Date();
-    const y   = now.getUTCFullYear();
-    const m   = now.getUTCMonth();
-    const d   = now.getUTCDate() - 1;
-    return {
-      start: new Date(Date.UTC(y, m, d, 0, 0, 0, 0)),
-      end:   new Date(Date.UTC(y, m, d, 23, 59, 59, 999)),
-    };
-  }
-
-  // Default: current month
+  const t = String(text || '').toLowerCase();
+  if (/hoje|agora/.test(t)) return getTodayRange();
+  if (/essa semana|esta semana|semana/.test(t)) return getWeekRange();
+  if (/mês passado|último mês/.test(t)) return getLastMonthRange();
+  if (/esse mês|este mês|mês/.test(t)) return getMonthRange();
+  if (/ontem/.test(t)) return civilRange(shiftDateKey(dateKey(), -1));
   return getMonthRange();
 }
 
-/**
- * Format a date to Brazilian Portuguese string
- */
 function formatDateBR(date) {
-  const d = date instanceof Date ? date : date.toDate?.() ?? new Date(date);
+  const d = date instanceof Date ? date : date?.toDate?.() ?? new Date(date);
   return new Intl.DateTimeFormat('pt-BR', {
-    day: '2-digit',
-    month: '2-digit',
-    year: 'numeric',
-    timeZone: 'America/Sao_Paulo',
+    day: '2-digit', month: '2-digit', year: 'numeric', timeZone: 'America/Sao_Paulo',
   }).format(d);
 }
 
-/**
- * Format currency to BRL
- */
 function formatCurrencyBR(value) {
-  return new Intl.NumberFormat('pt-BR', {
-    style: 'currency',
-    currency: 'BRL',
-  }).format(value);
+  return new Intl.NumberFormat('pt-BR', { style: 'currency', currency: 'BRL' }).format(value);
 }
 
-/**
- * Get current month name in Portuguese
- */
 function getCurrentMonthNameBR() {
-  return new Intl.DateTimeFormat('pt-BR', {
-    month: 'long',
-    timeZone: 'America/Sao_Paulo',
-  }).format(new Date());
+  return new Intl.DateTimeFormat('pt-BR', { month: 'long', timeZone: 'America/Sao_Paulo' }).format(new Date());
 }
 
 module.exports = {
-  getTodayRange,
-  getWeekRange,
-  getMonthRange,
-  getLastMonthRange,
-  parseDateReference,
-  formatDateBR,
-  formatCurrencyBR,
-  getCurrentMonthNameBR,
+  getTodayRange, getWeekRange, getMonthRange, getLastMonthRange, parseDateReference,
+  formatDateBR, formatCurrencyBR, getCurrentMonthNameBR, civilRange, shiftDateKey,
 };
