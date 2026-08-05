@@ -20,6 +20,9 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 const cors = require('cors');
 const crypto = require('crypto');
+const { verifyMercadoPagoSignature, webhookEventId } = require('./utils/mercadoPagoWebhook');
+const { dateKey: saoPauloDateKey, monthKey: saoPauloMonthKey, previousMonthKey, extendExpiry } = require('./utils/saoPaulo');
+const { requestLimiter } = require('./middleware/requestLimiter');
 require('./config/firebase');
 const { handleHealthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
@@ -68,6 +71,10 @@ const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 
 const requireAiUser = requireFirebaseUser({ requirePro: true });
+const requireAllofyUser = requireFirebaseUser({ requirePro: true, dataKeys: [
+  'transactions','banks','cards','categories','goals','debts','benefits','cofres',
+  'uberJornadas','uberCorridas','uberGastos','uberAbastec','uberVeiculos','cardTransactions'
+] });
 const requireSignedInUser = requireFirebaseUser();
 app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
 
@@ -144,41 +151,73 @@ async function fetchPricing(db) {
 }
 
 // Monta o objeto Firestore para ativar um plano
-async function buildPlanUpdate(plan, subId, db) {
+async function buildPlanUpdate(plan, subId, db, userId) {
   const def = PLANOS_DEF[plan];
-  if (!def) { console.warn('Plano desconhecido:', plan); return null; }
+  if (!def) return null;
 
-  const now     = new Date();
-  const expires = new Date(now.getTime() + def.dias * 24 * 60 * 60 * 1000).toISOString();
-
-  // Busca estado atual do usuário para não sobrescrever módulos já ativos
+  const now = new Date();
   let current = {};
-  if (db && subId === null) {
-    // será chamado com uid quando disponível
+  if (db && userId) {
+    const snap = await db.collection('users').doc(userId).get();
+    if (!snap.exists) throw Object.assign(new Error('Usuário do pagamento não encontrado'), { status: 404 });
+    current = snap.data() || {};
   }
 
-  // Nunca revoga um módulo que já está ativo e não expirou
-  // Só ativa o que o novo plano define — nunca desativa o que já existe
   const update = {
-    proPlan:   plan,
-    proSince:  now.toISOString(),
+    proPlan: plan,
+    proSince: current.proSince || now.toISOString(),
     proCancelled: false,
-    ...(subId && { proSubscriptionId: subId }),
+    proSubscriptionStatus: subId ? 'authorized' : (current.proSubscriptionStatus || null),
+    updatedAt: now.toISOString(),
+    ...(subId ? { proSubscriptionId: String(subId) } : {}),
   };
 
-  // isPro: ativa se o novo plano tem, mas nunca revoga
   if (def.isPro) {
-    update.isPro         = true;
-    update.proExpiresAt  = expires;
+    update.isPro = true;
+    update.proExpiresAt = extendExpiry(current.proExpiresAt, def.dias, now);
   }
-
-  // isMotorista: ativa se o novo plano tem, mas nunca revoga
   if (def.isMotorista) {
-    update.isMotorista        = true;
-    update.motoristaExpiresAt = expires;
+    update.isMotorista = true;
+    update.motoristaExpiresAt = extendExpiry(current.motoristaExpiresAt, def.dias, now);
   }
-
   return update;
+}
+
+function parseExternalReference(value) {
+  const [userId, plan, ...extra] = String(value || '').split('|');
+  if (!userId || !plan || extra.length || !PLANOS_DEF[plan]) return null;
+  return { userId, plan };
+}
+
+function assertMercadoPagoConfigured() {
+  if (!process.env.MP_ACCESS_TOKEN) {
+    throw Object.assign(new Error('Mercado Pago não configurado no servidor'), { status: 503 });
+  }
+}
+
+async function mercadoPagoRequest(path, options = {}) {
+  assertMercadoPagoConfigured();
+  const response = await fetch(`https://api.mercadopago.com${path}`, {
+    ...options,
+    headers: {
+      'Content-Type': 'application/json',
+      Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
+      ...(options.headers || {}),
+    },
+  });
+  const text = await response.text();
+  let data = {};
+  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
+  if (!response.ok) {
+    const message = data?.message || data?.error || `Mercado Pago respondeu ${response.status}`;
+    throw Object.assign(new Error(message), { status: response.status, providerData: data });
+  }
+  return data;
+}
+
+function paymentNotificationUrl() {
+  const base = String(process.env.PUBLIC_API_URL || 'https://finny-bot.onrender.com').replace(/\/$/, '');
+  return `${base}/webhook-mp`;
 }
 
 // ─────────────────────────────────────────────
@@ -197,265 +236,365 @@ app.get('/pricing', async (req, res) => {
 });
 
 // ─────────────────────────────────────────────
-// MERCADO PAGO — CRIAR ASSINATURA RECORRENTE
+// MERCADO PAGO — ROTAS AUTENTICADAS E WEBHOOK
 // ─────────────────────────────────────────────
-app.post('/create-payment', async (req, res) => {
+const paymentLimiter = requestLimiter({ windowMs: 60_000, max: 8 });
+const pointsLimiter = requestLimiter({ windowMs: 60_000, max: 20 });
+
+app.post('/create-payment', requireSignedInUser, paymentLimiter, async (req, res) => {
   try {
-    const { plan, userId, userEmail, userName } = req.body;
-    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
-    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
+    const plan = String(req.body?.plan || '');
+    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: 'Plano inválido.' });
+    const userId = req.userIdentity.uid;
+    const userEmail = String(req.userIdentity.email || req.userData?.email || '').trim().toLowerCase();
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) return res.status(409).json({ error: 'Sua conta precisa ter um e-mail válido.' });
 
     const { getDb } = require('./config/firebase');
     const db = getDb();
-    const pricing = await fetchPricing(db);
-
-    const price = await getPlanPrice(plan, pricing);
-    const def   = PLANOS_DEF[plan];
-    const isYearly   = plan.endsWith('-yearly') || plan === 'yearly';
-    const frequency  = isYearly ? 12 : 1;
-
-    const response = await fetch('https://api.mercadopago.com/preapproval', {
+    const price = await getPlanPrice(plan, await fetchPricing(db));
+    const def = PLANOS_DEF[plan];
+    const yearly = plan.endsWith('-yearly') || plan === 'yearly';
+    const data = await mercadoPagoRequest('/preapproval', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
-      },
       body: JSON.stringify({
-        reason:             'Allo Finanças — ' + def.label,
-        external_reference: userId + '|' + plan,
-        payer_email:        userEmail || '',
+        reason: `Allo Finanças — ${def.label}`,
+        external_reference: `${userId}|${plan}`,
+        payer_email: userEmail,
         auto_recurring: {
-          frequency,
-          frequency_type:     'months',
+          frequency: yearly ? 12 : 1,
+          frequency_type: 'months',
           transaction_amount: price,
-          currency_id:        'BRL'
+          currency_id: 'BRL',
         },
-        back_url:         'https://allofinancas.com/app?payment=success',
-        status:           'pending',
-        notification_url: 'https://finny-bot.onrender.com/webhook-mp'
-      })
+        back_url: 'https://allofinancas.com/app?payment=success',
+        status: 'pending',
+        notification_url: paymentNotificationUrl(),
+      }),
     });
-
-    const data = await response.json();
-    console.log('MP preapproval response:', JSON.stringify(data));
-    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar assinatura' });
+    if (!data.init_point) throw new Error('Mercado Pago não devolveu a URL de pagamento.');
     res.json({ url: data.init_point, plan: def.label, price });
-  } catch(e) {
-    console.error('MP create-payment error:', e);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    logger.error(`create-payment: ${error.message}`);
+    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível iniciar a assinatura.' });
   }
 });
 
-// ─────────────────────────────────────────────
-// MERCADO PAGO — PAGAMENTO ÚNICO (PIX/BOLETO)
-// ─────────────────────────────────────────────
-app.post('/create-payment-pix', async (req, res) => {
+app.post('/create-payment-pix', requireSignedInUser, paymentLimiter, async (req, res) => {
   try {
-    const { plan, userId, userEmail, userName } = req.body;
-    if (!plan || !userId) return res.status(400).json({ error: 'Dados inválidos' });
-    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: `Plano inválido: ${plan}` });
+    const plan = String(req.body?.plan || '');
+    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: 'Plano inválido.' });
+    const userId = req.userIdentity.uid;
+    const userEmail = String(req.userIdentity.email || req.userData?.email || '').trim().toLowerCase();
+    const userName = String(req.userData?.name || '').trim().slice(0, 100);
+    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) return res.status(409).json({ error: 'Sua conta precisa ter um e-mail válido.' });
 
-    const { getDb: getDb2 } = require('./config/firebase');
-    const db2 = getDb2();
-    const pricing = await fetchPricing(db2);
-
-    const price = await getPlanPrice(plan, pricing);
-    const def   = PLANOS_DEF[plan];
-
-    const response = await fetch('https://api.mercadopago.com/checkout/preferences', {
+    const { getDb } = require('./config/firebase');
+    const db = getDb();
+    const price = await getPlanPrice(plan, await fetchPricing(db));
+    const def = PLANOS_DEF[plan];
+    const data = await mercadoPagoRequest('/checkout/preferences', {
       method: 'POST',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
-      },
       body: JSON.stringify({
-        items: [{ title: 'Allo Finanças — ' + def.label, quantity: 1, currency_id: 'BRL', unit_price: price }],
-        payer:              { email: userEmail || '', name: userName || '' },
-        external_reference: userId + '|' + plan,
+        items: [{ title: `Allo Finanças — ${def.label}`, quantity: 1, currency_id: 'BRL', unit_price: price }],
+        payer: { email: userEmail, ...(userName ? { name: userName } : {}) },
+        external_reference: `${userId}|${plan}`,
         back_urls: {
           success: 'https://allofinancas.com/app?payment=success',
           failure: 'https://allofinancas.com/app?payment=failure',
-          pending: 'https://allofinancas.com/app?payment=pending'
+          pending: 'https://allofinancas.com/app?payment=pending',
         },
-        auto_return:            'approved',
-        statement_descriptor:   'Allo Financas',
-        notification_url:       'https://finny-bot.onrender.com/webhook-mp',
-        payment_methods: {
-          excluded_payment_types: [
-            { id: 'credit_card' },
-            { id: 'debit_card' }
-          ]
-        }
-      })
+        auto_return: 'approved',
+        statement_descriptor: 'Allo Financas',
+        notification_url: paymentNotificationUrl(),
+        payment_methods: { excluded_payment_types: [{ id: 'credit_card' }, { id: 'debit_card' }] },
+      }),
     });
-
-    const data = await response.json();
-    if (!data.init_point) return res.status(500).json({ error: 'Erro ao criar pagamento' });
+    if (!data.init_point) throw new Error('Mercado Pago não devolveu a URL de pagamento.');
     res.json({ url: data.init_point, plan: def.label, price });
-  } catch(e) {
-    console.error('MP PIX error:', e);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    logger.error(`create-payment-pix: ${error.message}`);
+    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível gerar o pagamento.' });
   }
 });
 
-// ─────────────────────────────────────────────
-// MERCADO PAGO — CANCELAR ASSINATURA
-// ─────────────────────────────────────────────
-app.post('/cancel-subscription', async (req, res) => {
+app.post('/cancel-subscription', requireSignedInUser, paymentLimiter, async (req, res) => {
   try {
-    const { userId } = req.body;
-    if (!userId) return res.status(400).json({ error: 'userId obrigatório' });
-
+    const userId = req.userIdentity.uid;
     const { getDb } = require('./config/firebase');
     const db = getDb();
-
-    const userDoc  = await db.collection('users').doc(userId).get();
+    const userDoc = await db.collection('users').doc(userId).get();
     const userData = userDoc.data() || {};
-    const subscriptionId = userData.proSubscriptionId;
+    const subscriptionId = String(userData.proSubscriptionId || '');
+    if (!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa.' });
 
-    if (!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa' });
+    const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`);
+    const reference = parseExternalReference(subscription.external_reference);
+    if (!reference || reference.userId !== userId) return res.status(403).json({ error: 'Esta assinatura não pertence à conta autenticada.' });
 
-    const mpRes = await fetch(`https://api.mercadopago.com/preapproval/${subscriptionId}`, {
+    const updated = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`, {
       method: 'PUT',
-      headers: {
-        'Content-Type': 'application/json',
-        'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN
-      },
-      body: JSON.stringify({ status: 'cancelled' })
+      body: JSON.stringify({ status: 'canceled' }),
     });
+    if (!['canceled', 'cancelled'].includes(String(updated.status || ''))) throw new Error('O cancelamento não foi confirmado.');
 
-    const mpData = await mpRes.json();
-    console.log('MP cancel response:', JSON.stringify(mpData));
-
-    if (mpData.status !== 'cancelled') return res.status(500).json({ error: 'Erro ao cancelar no Mercado Pago' });
-
-    // Mantém Pro até expirar naturalmente — só marca como cancelado
     await db.collection('users').doc(userId).set({
-      proCancelled:   true,
+      proCancelled: true,
       proCancelledAt: new Date().toISOString(),
-      proSubscriptionStatus: 'cancelled',
+      proSubscriptionStatus: 'canceled',
     }, { merge: true });
-
     res.json({ success: true });
-  } catch(e) {
-    console.error('Cancel error:', e);
-    res.status(500).json({ error: e.message });
+  } catch (error) {
+    logger.error(`cancel-subscription: ${error.message}`);
+    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível cancelar a assinatura.' });
   }
 });
 
-// ─────────────────────────────────────────────
-// MERCADO PAGO — WEBHOOK
-// ─────────────────────────────────────────────
-function verifyMercadoPagoSignature(req) {
-  const signature = req.headers['x-signature'];
-  const secret    = process.env.MP_WEBHOOK_SECRET;
-  if (!signature || !secret) return false;
-  const hashPart = (signature.split(',').find(p => p.startsWith('v1=')) || '').replace('v1=', '');
-  const generated = crypto.createHmac('sha256', secret).update(JSON.stringify(req.body)).digest('hex');
-  return generated === hashPart;
+async function claimWebhookEvent(db, eventId, metadata) {
+  const ref = db.collection('mp_webhook_events').doc(eventId);
+  return db.runTransaction(async transaction => {
+    const snap = await transaction.get(ref);
+    const current = snap.data() || {};
+    if (current.status === 'processed' || current.status === 'ignored') return false;
+    const lastAttempt = new Date(current.updatedAt || 0).getTime();
+    if (current.status === 'processing' && Date.now() - lastAttempt < 5 * 60_000) return false;
+    transaction.set(ref, {
+      ...metadata,
+      status: 'processing',
+      attempts: Number(current.attempts || 0) + 1,
+      updatedAt: new Date().toISOString(),
+      createdAt: current.createdAt || new Date().toISOString(),
+    }, { merge: true });
+    return true;
+  });
+}
+
+async function finishWebhookEvent(db, eventId, status, details = {}) {
+  await db.collection('mp_webhook_events').doc(eventId).set({
+    status,
+    ...details,
+    updatedAt: new Date().toISOString(),
+    ...(status === 'processed' || status === 'ignored' ? { processedAt: new Date().toISOString() } : {}),
+  }, { merge: true });
+}
+
+async function validatePaymentValue(db, payment, plan) {
+  const expected = Number(await getPlanPrice(plan, await fetchPricing(db)));
+  const received = Number(payment.transaction_amount ?? payment.auto_recurring?.transaction_amount);
+  const currency = String(payment.currency_id || payment.auto_recurring?.currency_id || '');
+  if (currency && currency !== 'BRL') throw new Error('Moeda divergente no pagamento.');
+  if (Number.isFinite(received) && Math.abs(received - expected) > 0.02) throw new Error('Valor divergente no pagamento.');
 }
 
 app.post('/webhook-mp', async (req, res) => {
-  // Responde imediatamente para o MP não retentar
-  res.sendStatus(200);
+  const dataId = req.body?.data?.id ?? req.query?.['data.id'] ?? req.body?.id;
+  const type = String(req.body?.type || req.body?.topic || req.query?.type || req.query?.topic || '');
+  const action = String(req.body?.action || '');
+  const validSignature = verifyMercadoPagoSignature({
+    signature: req.get('x-signature'),
+    requestId: req.get('x-request-id'),
+    dataId,
+    secret: process.env.MP_WEBHOOK_SECRET,
+  });
+  if (!validSignature) return res.status(401).json({ error: 'Assinatura do webhook inválida.' });
+  if (!dataId || !type) return res.status(400).json({ error: 'Webhook sem identificação.' });
 
+  const { getDb } = require('./config/firebase');
+  const db = getDb();
+  const eventId = webhookEventId(type, dataId, action);
   try {
-    const { type, data } = req.body;
-    if (!type || !data) { console.warn('Webhook inválido (sem dados)'); return; }
+    const claimed = await claimWebhookEvent(db, eventId, { type, dataId: String(dataId), action });
+    if (!claimed) return res.sendStatus(200);
 
-    console.log('Webhook MP:', type, data);
-
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-
-    // ── PAGAMENTO ÚNICO (PIX/Boleto) ──
     if (type === 'payment') {
-      const paymentId = data?.id;
-      if (!paymentId) return;
-
-      const pmtRes = await fetch('https://api.mercadopago.com/v1/payments/' + paymentId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-      });
-      const pmt = await pmtRes.json();
-      console.log('STATUS PAGAMENTO:', pmt.status, '| PLANO:', pmt.external_reference);
-
-      if (pmt.status !== 'approved') return;
-
-      const [userId, plan] = (pmt.external_reference || '').split('|');
-      if (!userId || !plan) return;
-
-      const update = await buildPlanUpdate(plan, null);
-      if (!update) return;
-
-      update.proPaymentId = String(paymentId);
-      await db.collection('users').doc(userId).set(update, { merge: true });
-      console.log('✅ Plano ativado (pagamento):', plan, '→', userId);
-    }
-
-    // ── ASSINATURA CRIADA / ATUALIZADA ──
-    if (type === 'subscription_preapproval') {
-      const subId = data?.id;
-      if (!subId) return;
-
-      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
-      });
-      const sub = await subRes.json();
-
-      const [userId, plan] = (sub.external_reference || '').split('|');
-      if (!userId) return;
-
-      // Salva ID e status da assinatura
-      await db.collection('users').doc(userId).set({
-        proSubscriptionId:     subId,
-        proSubscriptionStatus: sub.status,
-      }, { merge: true });
-
-      console.log('📋 Assinatura salva:', subId, '| status:', sub.status);
-
-      // Cancelamento
-      if (sub.status === 'cancelled') {
-        await db.collection('users').doc(userId).set({
-          // No cancelamento, revoga apenas o módulo do plano cancelado
-        ...(PLANOS_DEF[plan]?.isPro        && { isPro: false,        proExpiresAt: null }),
-        ...(PLANOS_DEF[plan]?.isMotorista  && { isMotorista: false,  motoristaExpiresAt: null }),
-        proCancelled:          true,
-        proCancelledAt:        new Date().toISOString(),
-        proSubscriptionStatus: 'cancelled',
-        }, { merge: true });
-        console.log('❌ Plano cancelado:', userId);
+      const payment = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(dataId)}`);
+      if (payment.status !== 'approved') {
+        await finishWebhookEvent(db, eventId, 'ignored', { outcome: `payment_${payment.status || 'unknown'}` });
+        return res.sendStatus(200);
       }
+      const reference = parseExternalReference(payment.external_reference);
+      if (!reference) throw new Error('Referência externa inválida.');
+      await validatePaymentValue(db, payment, reference.plan);
+      const update = await buildPlanUpdate(reference.plan, null, db, reference.userId);
+      await db.collection('users').doc(reference.userId).set({ ...update, proPaymentId: String(dataId) }, { merge: true });
+    } else if (type === 'subscription_preapproval') {
+      const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(dataId)}`);
+      const reference = parseExternalReference(subscription.external_reference);
+      if (!reference) throw new Error('Referência da assinatura inválida.');
+      const status = String(subscription.status || '');
+      await db.collection('users').doc(reference.userId).set({
+        proSubscriptionId: String(dataId),
+        proSubscriptionStatus: status,
+        ...(['canceled', 'cancelled'].includes(status) ? {
+          proCancelled: true,
+          proCancelledAt: new Date().toISOString(),
+        } : {}),
+      }, { merge: true });
+    } else if (type === 'subscription_authorized_payment') {
+      let authorizedPayment;
+      try {
+        authorizedPayment = await mercadoPagoRequest(`/authorized_payments/${encodeURIComponent(dataId)}`);
+      } catch (_) {
+        authorizedPayment = {};
+      }
+      const subscriptionId = authorizedPayment.preapproval_id || authorizedPayment.subscription_id || dataId;
+      const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`);
+      const reference = parseExternalReference(authorizedPayment.external_reference || subscription.external_reference);
+      if (!reference) throw new Error('Referência da renovação inválida.');
+      if (authorizedPayment.status && !['approved', 'authorized'].includes(authorizedPayment.status)) {
+        await finishWebhookEvent(db, eventId, 'ignored', { outcome: `authorized_payment_${authorizedPayment.status}` });
+        return res.sendStatus(200);
+      }
+      await validatePaymentValue(db, authorizedPayment, reference.plan);
+      const update = await buildPlanUpdate(reference.plan, subscriptionId, db, reference.userId);
+      await db.collection('users').doc(reference.userId).set(update, { merge: true });
+    } else {
+      await finishWebhookEvent(db, eventId, 'ignored', { outcome: 'unsupported_type' });
+      return res.sendStatus(200);
     }
 
-    // ── COBRANÇA RECORRENTE APROVADA ──
-    if (type === 'subscription_authorized_payment') {
-      const subId = data?.id;
-      if (!subId) return;
+    await finishWebhookEvent(db, eventId, 'processed');
+    return res.sendStatus(200);
+  } catch (error) {
+    logger.error(`webhook-mp ${eventId}: ${error.message}`);
+    await finishWebhookEvent(db, eventId, 'failed', { error: String(error.message).slice(0, 300) }).catch(() => {});
+    return res.status(500).json({ error: 'Falha temporária ao processar webhook.' });
+  }
+});
 
-      const subRes = await fetch('https://api.mercadopago.com/preapproval/' + subId, {
-        headers: { 'Authorization': 'Bearer ' + process.env.MP_ACCESS_TOKEN }
+const ALLO_POINTS_VALUES = Object.freeze({ transaction: 10, import: 30, goal_complete: 100, daily_login: 5 });
+const ALLO_POINTS_DESCRIPTIONS = Object.freeze({
+  transaction: 'Transação registrada',
+  import: 'Fatura importada',
+  goal_complete: 'Meta concluída',
+  daily_login: 'Acesso diário ao aplicativo',
+  streak_7: 'Sequência de 7 dias',
+});
+
+function eventHash(value) {
+  return crypto.createHash('sha256').update(String(value)).digest('hex');
+}
+
+async function findV39Item(db, uid, collection, id) {
+  if (!id) return null;
+  const snap = await db.collection('users').doc(uid).collection(collection).doc(String(id)).get();
+  return snap.exists ? snap.data() : null;
+}
+
+async function validatePointsEvent(db, uid, profile, type, eventKey) {
+  if (type === 'daily_login') return eventKey === `daily_login:${saoPauloDateKey()}`;
+  if (type === 'transaction') {
+    const id = eventKey.startsWith('transaction:') ? eventKey.slice(12) : '';
+    const local = [...(profile.transactions || []), ...(profile.cardTransactions || [])].find(item => String(item.id) === id);
+    return Boolean(local || await findV39Item(db, uid, 'transactions', id) || await findV39Item(db, uid, 'cardTransactions', id));
+  }
+  if (type === 'import') {
+    const id = eventKey.split(':').pop();
+    return Boolean((profile.importHistory || []).find(item => String(item.id) === id) || await findV39Item(db, uid, 'importHistory', id));
+  }
+  if (type === 'goal_complete') {
+    const id = eventKey.startsWith('goal_complete:') ? eventKey.slice(14) : '';
+    const goal = (profile.goals || []).find(item => String(item.id) === id) || await findV39Item(db, uid, 'goals', id);
+    return Boolean(goal && (goal.status === 'completed' || Number(goal.current || 0) >= Number(goal.target || Infinity)));
+  }
+  return false;
+}
+
+app.post('/allopoints/award', requireSignedInUser, pointsLimiter, async (req, res) => {
+  const type = String(req.body?.type || '');
+  const eventKey = String(req.body?.eventKey || '').trim().slice(0, 220);
+  if (!Object.prototype.hasOwnProperty.call(ALLO_POINTS_VALUES, type) || !eventKey) return res.status(400).json({ error: 'Evento de pontos inválido.' });
+
+  const { getDb, admin } = require('./config/firebase');
+  const db = getDb();
+  const uid = req.userIdentity.uid;
+  try {
+    const fresh = await db.collection('users').doc(uid).get();
+    const profile = fresh.data() || {};
+    if (!await validatePointsEvent(db, uid, profile, type, eventKey)) return res.status(409).json({ error: 'O evento ainda não foi confirmado nos seus dados.' });
+
+    const month = saoPauloMonthKey();
+    const historyRef = db.collection('users').doc(uid).collection('ap_history').doc(eventHash(eventKey));
+    const rankRef = db.collection('ap_ranking').doc(month).collection('users').doc(uid);
+    const userRef = db.collection('users').doc(uid);
+    const result = await db.runTransaction(async transaction => {
+      const [historySnap, userSnap, rankSnap] = await Promise.all([
+        transaction.get(historyRef), transaction.get(userRef), transaction.get(rankRef),
+      ]);
+      if (historySnap.exists) return { awarded: false, pointsAwarded: 0, total: Number(userSnap.data()?.alloPoints || 0) };
+
+      const current = userSnap.data() || {};
+      let pointsAwarded = ALLO_POINTS_VALUES[type];
+      let streak = Number(current.apStreak || 0);
+      const userUpdate = {};
+      if (type === 'daily_login') {
+        const today = saoPauloDateKey();
+        const yesterday = saoPauloDateKey(new Date(Date.now() - 86400000));
+        streak = current.apStreakLastDate === yesterday ? streak + 1 : 1;
+        userUpdate.apLastLogin = today;
+        userUpdate.apStreak = streak;
+        userUpdate.apStreakLastDate = today;
+        if (streak % 7 === 0) pointsAwarded += 50;
+      }
+
+      const total = Number(current.alloPoints || 0) + pointsAwarded;
+      const monthTotal = Number(rankSnap.data()?.points || 0) + pointsAwarded;
+      transaction.set(userRef, { ...userUpdate, alloPoints: total }, { merge: true });
+      transaction.set(historyRef, {
+        type,
+        description: ALLO_POINTS_DESCRIPTIONS[type],
+        points: pointsAwarded,
+        eventKey,
+        monthKey: month,
+        streak: type === 'daily_login' ? streak : null,
+        createdAt: admin.firestore.FieldValue.serverTimestamp(),
       });
-      const sub = await subRes.json();
-
-      const [userId, plan] = (sub.external_reference || '').split('|');
-      if (!userId || !plan) return;
-
-      const update = await buildPlanUpdate(plan, subId);
-      if (!update) return;
-
-      await db.collection('users').doc(userId).set(update, { merge: true });
-      console.log('🔥 Renovação via assinatura:', plan, '→', userId);
-    }
-
-  } catch(e) {
-    console.error('Webhook MP error:', e);
+      transaction.set(rankRef, {
+        points: monthTotal,
+        name: profile.name || req.userIdentity.email?.split('@')[0] || 'Usuário',
+        updatedAt: admin.firestore.FieldValue.serverTimestamp(),
+      }, { merge: true });
+      return { awarded: true, pointsAwarded, total, streak };
+    });
+    res.json({ ok: true, ...result });
+  } catch (error) {
+    logger.warn(`allopoints/award: ${error.message}`);
+    res.status(500).json({ error: 'Não foi possível registrar os pontos agora.' });
   }
 });
 
 // ─────────────────────────────────────────────
 // AI ANALYSIS ROUTE
 // ─────────────────────────────────────────────
-app.post('/ai-analysis', requireAiUser, aiRateLimiter('analysis'), handleAiAnalysis);
+app.post('/ai-analysis', requireAllofyUser, aiRateLimiter('analysis'), handleAiAnalysis);
+
+
+app.get('/notices', requireSignedInUser, requestLimiter({ windowMs: 60_000, max: 20 }), async (req, res) => {
+  try {
+    const { getDb } = require('./config/firebase');
+    const snap = await getDb().collection('admin_messages').orderBy('createdAt', 'desc').limit(100).get();
+    const isPro = req.userData?.isPro === true || req.userIdentity.isAdmin === true;
+    const messages = snap.docs.map(doc => ({ id: doc.id, ...doc.data() })).filter(message => {
+      if (message.target === 'user') return message.userId === req.userIdentity.uid;
+      if (message.target === 'pro') return isPro;
+      if (message.target === 'free') return !isPro;
+      return !message.target || message.target === 'all';
+    }).slice(0, 20).map(message => ({
+      id: message.id,
+      type: String(message.type || message.tipo || 'info').slice(0, 20),
+      title: String(message.title || '').slice(0, 120),
+      body: String(message.body || message.message || '').slice(0, 1000),
+      target: message.target || 'all',
+      promoMonthly: Number(message.promoMonthly || 0) || null,
+      promoYearly: Number(message.promoYearly || 0) || null,
+      promoExpires: message.promoExpires || null,
+      createdAt: message.createdAt?.toDate ? message.createdAt.toDate().toISOString() : message.createdAt || null,
+    }));
+    res.json({ ok: true, messages });
+  } catch (error) {
+    logger.warn(`notices: ${error.message}`);
+    res.status(500).json({ error: 'Não foi possível carregar os avisos.' });
+  }
+});
 
 // Indicação processada no servidor para impedir concessão de plano pelo cliente.
 app.post('/apply-referral', async (req, res) => {
@@ -557,15 +696,35 @@ app.get('/admin/health',requireAdminRequest,async(req,res)=>{
 
 app.get('/admin/users',requireAdminRequest,async(req,res)=>{
   try{
-    const {admin}=require('./config/firebase');
-    const users=[];let pageToken;
-    do{
-      const page=await admin.auth().listUsers(1000,pageToken);
-      users.push(...page.users.map(serializeAuthUser));
-      pageToken=page.pageToken;
-    }while(pageToken&&users.length<10000);
-    await writeAdminAudit(req,'users.list',null,'success',{count:users.length});
-    res.json({ok:true,count:users.length,users});
+    const {admin,getDb}=require('./config/firebase');
+    const limit=Math.min(200,Math.max(20,Number(req.query.limit)||100));
+    const pageToken=String(req.query.pageToken||'').trim()||undefined;
+    const page=await admin.auth().listUsers(limit,pageToken);
+    const db=getDb();
+    const refs=page.users.map(user=>db.collection('users').doc(user.uid));
+    const profiles=refs.length?await db.getAll(...refs):[];
+    const byUid=new Map(profiles.map(doc=>[doc.id,doc.data()||{}]));
+    const users=page.users.map(authUser=>{
+      const profile=byUid.get(authUser.uid)||{};
+      return {
+        ...serializeAuthUser(authUser),
+        name:profile.name||authUser.displayName||authUser.email?.split('@')[0]||'Usuário',
+        role:profile.role||null,
+        isAdmin:profile.role==='admin'||profile.isAdmin===true||authUser.customClaims?.admin===true,
+        isPro:profile.isPro===true,
+        isMotorista:profile.isMotorista===true,
+        proPlan:profile.proPlan||null,
+        proExpiresAt:profile.proExpiresAt||null,
+        motoristaExpiresAt:profile.motoristaExpiresAt||null,
+        banned:profile.banned===true||authUser.disabled===true,
+        lastActiveAt:profile.lastActiveAt||profile.lastLogin||null,
+        dataSchemaVersion:Number(profile.dataSchemaVersion||0),
+      };
+    });
+    let total=null;
+    try{total=(await db.collection('users').count().get()).data().count}catch(_){total=null}
+    await writeAdminAudit(req,'users.list',null,'success',{count:users.length,paginated:true});
+    res.json({ok:true,count:users.length,total,users,nextPageToken:page.pageToken||null});
   }catch(e){await writeAdminAudit(req,'users.list',null,'error',{message:e.message});res.status(500).json({error:'Não foi possível listar os usuários'})}
 });
 
@@ -629,7 +788,7 @@ app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
  * Health check
  */
 app.get('/health', handleHealthCheck);
-app.post('/allofy-chat', requireAiUser, aiRateLimiter('allofy'), handleAllofyChat);
+app.post('/allofy-chat', requireAllofyUser, aiRateLimiter('allofy'), handleAllofyChat);
 app.get('/allofy-history', requireAiUser, getAllofyHistory);
 app.delete('/allofy-history', requireAiUser, clearAllofyHistory);
 app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }));
@@ -830,187 +989,112 @@ app.use((req, res) => {
   res.status(404).json({ error: 'Route not found' });
 });
 // ─────────────────────────────────────────────
-// ALLO POINTS — APURAÇÃO MENSAL AUTOMÁTICA
+// ALLO POINTS — APURAÇÃO MENSAL RECUPERÁVEL
 // ─────────────────────────────────────────────
+async function claimRankingFinalization(db, monthKey) {
+  const ref=db.collection('ap_ranking').doc(monthKey);
+  return db.runTransaction(async transaction=>{
+    const snap=await transaction.get(ref);const data=snap.data()||{};
+    if(data.finalizationStatus==='processed'||data.apuratedAt)return false;
+    const last=new Date(data.finalizationUpdatedAt||0).getTime();
+    if(data.finalizationStatus==='processing'&&Date.now()-last<15*60_000)return false;
+    transaction.set(ref,{finalizationStatus:'processing',finalizationUpdatedAt:new Date().toISOString()},{merge:true});
+    return true;
+  });
+}
+
 async function apurarRankingMensal(){
-  try {
-    const now = new Date();
-    // Só roda no dia 1 de cada mês
-    if(now.getDate() !== 1) return;
-
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-
-    // Pega o mês anterior
-    const prevMonth = new Date(now.getFullYear(), now.getMonth() - 1, 1);
-    const monthKey  = prevMonth.getFullYear() + '-' + String(prevMonth.getMonth()+1).padStart(2,'0');
-    const monthLabel = prevMonth.toLocaleDateString('pt-BR', { month: 'long', year: 'numeric' });
-
-    console.log('🏆 Apurando ranking de:', monthKey);
-
-    // Busca o líder do mês
-    const rankSnap = await db.collection('ap_ranking').doc(monthKey)
-      .collection('users').orderBy('points', 'desc').limit(1).get();
-
+  const monthKey=previousMonthKey();
+  const {getDb}=require('./config/firebase');
+  const db=getDb();
+  try{
+    // Garante que o bônus do mês fechado entre no ranking antes da apuração.
+    await bonusSaldoPositivo(monthKey);
+    const claimed=await claimRankingFinalization(db,monthKey);
+    if(!claimed)return;
+    const [year,month]=monthKey.split('-').map(Number);
+    const monthLabel=new Date(year,month-1,15,12).toLocaleDateString('pt-BR',{month:'long',year:'numeric'});
+    const rankSnap=await db.collection('ap_ranking').doc(monthKey).collection('users').orderBy('points','desc').limit(1).get();
+    const parentRef=db.collection('ap_ranking').doc(monthKey);
     if(rankSnap.empty){
-      console.log('Nenhum participante no ranking de', monthKey);
+      await parentRef.set({finalizationStatus:'processed',finalizationUpdatedAt:new Date().toISOString(),apuratedAt:new Date().toISOString(),winner:null,prize:null},{merge:true});
       return;
     }
-
-    const winner   = rankSnap.docs[0];
-    const winnerId = winner.id;
-    const winnerData = winner.data();
-    const winnerPts  = winnerData.points || 0;
-    const winnerName = winnerData.name || 'Usuário';
-
-    console.log('🥇 Vencedor:', winnerName, 'com', winnerPts, 'pts');
-
-    // Ativa 1 mês de PRO grátis para o vencedor
-    const expiresAt = new Date(now.getTime() + 30 * 24 * 60 * 60 * 1000).toISOString();
-    await db.collection('users').doc(winnerId).set({
-      isPro: true,
-      proPlan: 'monthly',
-      proSince: now.toISOString(),
-      proExpiresAt: expiresAt,
-      proCancelled: false,
-      proAwardedBy: 'ranking',
-      proAwardMonth: monthKey
-    }, { merge: true });
-
-    // Salva o resultado no Firestore para histórico
-    await db.collection('ap_ranking').doc(monthKey).set({
-      winner: { id: winnerId, name: winnerName, points: winnerPts },
-      apuratedAt: new Date().toISOString(),
-      prize: '1 mês PRO grátis'
-    }, { merge: true });
-
-    // Envia notificação pelo sistema de mensagens do admin
-    await db.collection('admin_messages').add({
-      target: 'all',
-      type: 'success',
-      title: '🏆 Campeão do mês de ' + monthLabel + '!',
-      body: winnerName + ' venceu o ranking com ' + winnerPts.toLocaleString('pt-BR') + ' Allo Points e ganhou 1 mês PRO grátis! Parabéns! 🎉',
-      createdAt: new Date(),
-      createdBy: 'sistema'
+    const winner=rankSnap.docs[0];const winnerData=winner.data()||{};
+    const winnerRef=db.collection('users').doc(winner.id);
+    await db.runTransaction(async transaction=>{
+      const [parentSnap,userSnap]=await Promise.all([transaction.get(parentRef),transaction.get(winnerRef)]);
+      const parent=parentSnap.data()||{};
+      if(parent.apuratedAt||parent.finalizationStatus==='processed')return;
+      const user=userSnap.data()||{};const now=new Date();
+      const expiresAt=extendExpiry(user.proExpiresAt,30,now);
+      transaction.set(winnerRef,{
+        isPro:true,
+        proPlan:user.proPlan||'ranking-prize',
+        proSince:user.proSince||now.toISOString(),
+        proExpiresAt:expiresAt,
+        proAwardedBy:'ranking',
+        proAwardMonth:monthKey,
+        proPrizeDays:Number(user.proPrizeDays||0)+30,
+      },{merge:true});
+      transaction.set(parentRef,{
+        winner:{id:winner.id,name:winnerData.name||'Usuário',points:Number(winnerData.points||0)},
+        apuratedAt:now.toISOString(),
+        finalizationStatus:'processed',
+        finalizationUpdatedAt:now.toISOString(),
+        prize:'30 dias de Pro adicionados ao vencimento existente',
+      },{merge:true});
     });
-
-    console.log('✅ PRO ativado para o vencedor:', winnerName);
-  } catch(e){
-    console.error('apurarRankingMensal error:', e);
+    await db.collection('admin_messages').add({
+      target:'all',type:'success',title:`🏆 Campeão do mês de ${monthLabel}!`,
+      body:`${winnerData.name||'Usuário'} venceu o ranking com ${Number(winnerData.points||0).toLocaleString('pt-BR')} Allo Points e ganhou mais 30 dias de Pro. Parabéns! 🎉`,
+      createdAt:new Date(),createdBy:'sistema'
+    });
+  }catch(error){
+    logger.error(`apurarRankingMensal ${monthKey}: ${error.message}`);
+    await db.collection('ap_ranking').doc(monthKey).set({finalizationStatus:'failed',finalizationUpdatedAt:new Date().toISOString(),finalizationError:String(error.message).slice(0,250)},{merge:true}).catch(()=>{});
   }
 }
 
-// Roda a apuração todo dia (verifica internamente se é dia 1)
-apurarRankingMensal();
-setInterval(apurarRankingMensal, 24 * 60 * 60 * 1000);
-
 // ─────────────────────────────────────────────
-// ALLO POINTS — BÔNUS SALDO POSITIVO MENSAL
+// ALLO POINTS — BÔNUS DO ÚLTIMO MÊS FECHADO
 // ─────────────────────────────────────────────
-async function bonusSaldoPositivo(){
-  try {
-    const now = new Date();
-
-    // Só roda no último dia do mês
-    const tomorrow = new Date(now.getFullYear(), now.getMonth(), now.getDate() + 1);
-    const isLastDay = tomorrow.getMonth() !== now.getMonth();
-    if(!isLastDay) return;
-
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-
-    // Mês atual no formato YYYY-MM
-    const monthKey = now.getFullYear() + '-' + String(now.getMonth()+1).padStart(2,'0');
-
-    console.log('💰 Verificando saldo positivo do mês:', monthKey);
-
-    // Busca todos os usuários
-    const usersSnap = await db.collection('users').get();
-
-    let count = 0;
+async function bonusSaldoPositivo(monthKey=previousMonthKey()){
+  try{
+    const {getDb,admin}=require('./config/firebase');const db=getDb();
+    const usersSnap=await db.collection('users').get();
     for(const userDoc of usersSnap.docs){
-      try {
-        const userData = userDoc.data();
-        const userId   = userDoc.id;
-
-        // Pega transações do mês atual
-        const txSnap = await db.collection('users').doc(userId)
-          .collection('transactions')
-          .where('date', '>=', monthKey + '-01')
-          .where('date', '<=', monthKey + '-31')
-          .get().catch(() => null);
-
-        // Se não tem subcoleção de transações, tenta pelo campo no documento
-        let receitas = 0;
-        let despesas = 0;
-
-        if(txSnap && !txSnap.empty){
-          txSnap.docs.forEach(d => {
-            const tx = d.data();
-            if(tx.type === 'income') receitas += tx.amount || 0;
-            if(tx.type === 'expense') despesas += tx.amount || 0;
-          });
-        } else {
-          // Transações salvas no documento do usuário (estrutura atual do app)
-          const transactions = userData.transactions || [];
-          transactions.forEach(tx => {
-            if((tx.date || '').startsWith(monthKey)){
-              if(tx.type === 'income') receitas += tx.amount || 0;
-              if(tx.type === 'expense') despesas += tx.amount || 0;
-            }
-          });
-        }
-
-        // Verifica se saldo é positivo
-        if(receitas > 0 && receitas > despesas){
-          // Verifica se já ganhou bônus este mês
-          const jaGanhou = userData['apBonus_' + monthKey];
-          if(jaGanhou) continue;
-
-          // Adiciona +200 pts
-          const currentPts = userData.alloPoints || 0;
-          await db.collection('users').doc(userId).set({
-            alloPoints: currentPts + 200,
-            ['apBonus_' + monthKey]: true
-          }, { merge: true });
-
-          // Histórico
-          await db.collection('users').doc(userId)
-            .collection('ap_history').add({
-              type: 'positive_month',
-              description: 'Mês com saldo positivo! 💰',
-              points: 200,
-              createdAt: new Date()
-            });
-
-          // Ranking do mês
-          const rankRef = db.collection('ap_ranking').doc(monthKey)
-            .collection('users').doc(userId);
-          const rankDoc = await rankRef.get().catch(() => null);
-          const currentRankPts = rankDoc?.exists ? (rankDoc.data()?.points || 0) : 0;
-          await rankRef.set({
-            points: currentRankPts + 200,
-            name: userData.name || 'Usuário',
-            updatedAt: new Date()
-          }, { merge: true });
-
-          count++;
-          console.log('✅ +200 pts para:', userData.name || userId);
-        }
-      } catch(e){
-        console.warn('bonusSaldoPositivo user error:', e);
+      const user=userDoc.data()||{};const uid=userDoc.id;const marker=`apBonus_${monthKey}`;
+      if(user[marker])continue;
+      let transactions=[];
+      const txSnap=await userDoc.ref.collection('transactions').where('date','>=',`${monthKey}-01`).where('date','<=',`${monthKey}-31`).get().catch(()=>null);
+      if(txSnap&&!txSnap.empty)transactions=txSnap.docs.map(doc=>doc.data());
+      else transactions=(user.transactions||[]).filter(tx=>String(tx.date||'').startsWith(monthKey));
+      let income=0,expense=0;
+      transactions.forEach(tx=>{const amount=Number(tx.amount||0);if(tx.type==='income')income+=amount;if(tx.type==='expense')expense+=amount});
+      if(!(income>0&&income>expense)){
+        await userDoc.ref.set({[marker]:'not_eligible'},{merge:true});
+        continue;
       }
+      const historyRef=userDoc.ref.collection('ap_history').doc(eventHash(`positive_month:${monthKey}`));
+      const rankRef=db.collection('ap_ranking').doc(monthKey).collection('users').doc(uid);
+      await db.runTransaction(async transaction=>{
+        const [freshUser,history,rank]=await Promise.all([transaction.get(userDoc.ref),transaction.get(historyRef),transaction.get(rankRef)]);
+        const current=freshUser.data()||{};
+        if(current[marker]||history.exists)return;
+        transaction.set(userDoc.ref,{alloPoints:Number(current.alloPoints||0)+200,[marker]:true},{merge:true});
+        transaction.set(historyRef,{type:'positive_month',description:'Mês com saldo positivo',points:200,monthKey,createdAt:admin.firestore.FieldValue.serverTimestamp()});
+        transaction.set(rankRef,{points:Number(rank.data()?.points||0)+200,name:user.name||'Usuário',updatedAt:admin.firestore.FieldValue.serverTimestamp()},{merge:true});
+      });
     }
-
-    console.log('💰 Bônus saldo positivo aplicado para', count, 'usuários');
-  } catch(e){
-    console.error('bonusSaldoPositivo error:', e);
-  }
+  }catch(error){logger.error(`bonusSaldoPositivo ${monthKey}: ${error.message}`)}
 }
 
-// Roda todo dia (verifica internamente se é último dia do mês)
-bonusSaldoPositivo();
-setInterval(bonusSaldoPositivo, 24 * 60 * 60 * 1000);
+// Executa ao iniciar e a cada seis horas. Se o Render dormir no dia 1, a próxima
+// execução recupera automaticamente o mês anterior sem duplicar o prêmio.
+setTimeout(()=>apurarRankingMensal(),5_000);
+cron.schedule('20 */6 * * *',()=>apurarRankingMensal());
+
 // ─────────────────────────────────────────────
 // JOB DIÁRIO — VERIFICA EXPIRAÇÃO DO PRO
 // ─────────────────────────────────────────────
