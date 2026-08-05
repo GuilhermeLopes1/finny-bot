@@ -1,5 +1,6 @@
 const { getDb, admin } = require('../config/firebase');
 const logger = require('../utils/logger');
+const { hydrateProfile } = require('../services/v39ProfileService');
 
 function requireFirebaseUser(options = {}) {
   return async function firebaseUserMiddleware(req, res, next) {
@@ -17,8 +18,11 @@ function requireFirebaseUser(options = {}) {
         return res.status(403).json({ error: 'O Allofy está disponível no plano Pro.', code: 'pro_required' });
       }
 
+      const userData = options.dataKeys
+        ? await hydrateProfile(decoded.uid, profile, options.dataKeys)
+        : profile;
       req.userIdentity = { uid: decoded.uid, email: decoded.email || profile.email || '', isAdmin };
-      req.userData = profile;
+      req.userData = userData;
       next();
     } catch (error) {
       logger.warn(`Firebase auth negada: ${error.message}`);
