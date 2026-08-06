@@ -1,5 +1,5 @@
 /**
- * Allo API — pagamentos, IA, importação e notificações
+ * Allo API — Google Play, IA, importação e notificações
  */
 
 require('dotenv').config();
@@ -20,7 +20,6 @@ if (process.env.VAPID_PUBLIC_KEY && process.env.VAPID_PRIVATE_KEY) {
 }
 const cors = require('cors');
 const crypto = require('crypto');
-const { verifyMercadoPagoSignature, webhookEventId } = require('./utils/mercadoPagoWebhook');
 const { dateKey: saoPauloDateKey, monthKey: saoPauloMonthKey, previousMonthKey, extendExpiry } = require('./utils/saoPaulo');
 const { requestLimiter } = require('./middleware/requestLimiter');
 require('./config/firebase');
@@ -31,6 +30,9 @@ const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiControlle
 const { requireFirebaseUser } = require('./middleware/firebaseAuth');
 const { aiRateLimiter } = require('./middleware/aiRateLimiter');
 const { runNotificationCycle, sendPushToProfile, hasNotificationTarget } = require('./services/notificationService');
+const { registerGooglePlayBillingRoutes } = require('./controllers/googlePlayBillingController');
+const { reconcileStoredPurchases, productToPlan } = require('./services/googlePlayBillingService');
+const { buildEffectiveProUpdate, toMillis } = require('./services/proEntitlementService');
 
 // ─────────────────────────────────────────────
 // INIT
@@ -79,386 +81,35 @@ const requireSignedInUser = requireFirebaseUser();
 app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
 
 // ─────────────────────────────────────────────
+// PREÇOS PÚBLICOS E GOOGLE PLAY BILLING
 // ─────────────────────────────────────────────
-// SISTEMA DE PLANOS MODULAR — Allo Finanças
-// ─────────────────────────────────────────────
-//
-// PLANOS:
-//   free              → gratuito (sem isPro, sem módulos)
-//   motorista-monthly / motorista-yearly  → gratuito + módulo motorista
-//   pro-monthly       / pro-yearly        → financeiro pessoal completo
-//   proplus-monthly   / proplus-yearly    → Pro + Motorista
-//
-// Campos gravados no Firestore:
-//   isPro              → true se plano pro ou pro+
-//   isMotorista        → true se motorista ou pro+
-//   proPlan            → ID do plano (ex: 'pro-monthly')
-//   proExpiresAt       → expiração geral
-//   motoristaExpiresAt → expiração motorista
-// ─────────────────────────────────────────────
-
-const PLANOS_DEF = {
-  // ── Motorista (gratuito + motorista) ──
-  'motorista-monthly': { isPro:false, isMotorista:true,  dias:30,  label:'Motorista Mensal' },
-  'motorista-yearly':  { isPro:false, isMotorista:true,  dias:365, label:'Motorista Anual'  },
-
-// ── Pro (financeiro pessoal completo) ──
-  'pro-monthly':             { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal'              },
-  'pro-yearly':              { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual'               },
-
-  // ── Pro Motorista (Pro + Motorista) ──
-  'pro-motorista-monthly':   { isPro:true,  isMotorista:true,  dias:30,  label:'Pro Motorista Mensal'    },
-  'pro-motorista-yearly':    { isPro:true,  isMotorista:true,  dias:365, label:'Pro Motorista Anual'     },
-
-  // ── Pro+ (tudo liberado) ──
-  'proplus-monthly':         { isPro:true,  isMotorista:true,  dias:30,  label:'Pro+ Mensal'             },
-  'proplus-yearly':          { isPro:true,  isMotorista:true,  dias:365, label:'Pro+ Anual'              },
-
-  // Retrocompatibilidade com planos antigos
-  'monthly': { isPro:true,  isMotorista:false, dias:30,  label:'Pro Mensal (legado)' },
-  'yearly':  { isPro:true,  isMotorista:false, dias:365, label:'Pro Anual (legado)'  },
-};
-
-// Busca preço do plano no Firestore (respeita promoções)
-async function getPlanPrice(plan, pricing) {
-  const promoAtiva = pricing.promoExpires && new Date(pricing.promoExpires) > new Date();
-  const defaults = {
-    'motorista-monthly': pricing.motorista        || 9.90,
-    'motorista-yearly':  pricing.motoristaYearly  || 89.90,
-    'pro-monthly':             promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly       || 19.90),
-    'pro-yearly':              promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly        || 189.90),
-    'pro-motorista-monthly':   pricing.proMotorista       || 24.90,
-    'pro-motorista-yearly':    pricing.proMotoristaYearly || 229.90,
-    'proplus-monthly':         pricing.proPlus            || 29.90,
-    'proplus-yearly':          pricing.proPlusYearly      || 269.90,
-    // legado
-    'monthly':           promoAtiva && pricing.promoMonthly ? pricing.promoMonthly : (pricing.monthly  || 19.90),
-    'yearly':            promoAtiva && pricing.promoYearly  ? pricing.promoYearly  : (pricing.yearly   || 189.90),
-  };
-  return defaults[plan] || 9.90;
-}
-
-// Monta o objeto Firestore para ativar um plano
-// Busca pricing sempre fresco do Firestore
+// Os preços exibidos dentro da TWA são carregados diretamente da Google Play
+// pela Digital Goods API. A rota /pricing permanece apenas como fallback para
+// páginas públicas do site, sem iniciar cobranças externas.
 async function fetchPricing(db) {
   try {
     const doc = await db.collection('settings').doc('pricing').get();
     return doc.exists ? doc.data() : {};
-  } catch(e) {
-    console.warn('fetchPricing error:', e.message);
+  } catch (error) {
+    logger.warn(`fetchPricing: ${error.message}`);
     return {};
   }
 }
 
-// Monta o objeto Firestore para ativar um plano
-async function buildPlanUpdate(plan, subId, db, userId) {
-  const def = PLANOS_DEF[plan];
-  if (!def) return null;
-
-  const now = new Date();
-  let current = {};
-  if (db && userId) {
-    const snap = await db.collection('users').doc(userId).get();
-    if (!snap.exists) throw Object.assign(new Error('Usuário do pagamento não encontrado'), { status: 404 });
-    current = snap.data() || {};
-  }
-
-  const update = {
-    proPlan: plan,
-    proSince: current.proSince || now.toISOString(),
-    proCancelled: false,
-    proSubscriptionStatus: subId ? 'authorized' : (current.proSubscriptionStatus || null),
-    updatedAt: now.toISOString(),
-    ...(subId ? { proSubscriptionId: String(subId) } : {}),
-  };
-
-  if (def.isPro) {
-    update.isPro = true;
-    update.proExpiresAt = extendExpiry(current.proExpiresAt, def.dias, now);
-  }
-  if (def.isMotorista) {
-    update.isMotorista = true;
-    update.motoristaExpiresAt = extendExpiry(current.motoristaExpiresAt, def.dias, now);
-  }
-  return update;
-}
-
-function parseExternalReference(value) {
-  const [userId, plan, ...extra] = String(value || '').split('|');
-  if (!userId || !plan || extra.length || !PLANOS_DEF[plan]) return null;
-  return { userId, plan };
-}
-
-function assertMercadoPagoConfigured() {
-  if (!process.env.MP_ACCESS_TOKEN) {
-    throw Object.assign(new Error('Mercado Pago não configurado no servidor'), { status: 503 });
-  }
-}
-
-async function mercadoPagoRequest(path, options = {}) {
-  assertMercadoPagoConfigured();
-  const response = await fetch(`https://api.mercadopago.com${path}`, {
-    ...options,
-    headers: {
-      'Content-Type': 'application/json',
-      Authorization: `Bearer ${process.env.MP_ACCESS_TOKEN}`,
-      ...(options.headers || {}),
-    },
-  });
-  const text = await response.text();
-  let data = {};
-  try { data = text ? JSON.parse(text) : {}; } catch (_) { data = { raw: text }; }
-  if (!response.ok) {
-    const message = data?.message || data?.error || `Mercado Pago respondeu ${response.status}`;
-    throw Object.assign(new Error(message), { status: response.status, providerData: data });
-  }
-  return data;
-}
-
-function paymentNotificationUrl() {
-  const base = String(process.env.PUBLIC_API_URL || 'https://finny-bot.onrender.com').replace(/\/$/, '');
-  return `${base}/webhook-mp`;
-}
-
-// ─────────────────────────────────────────────
-// ─────────────────────────────────────────────
-// ROTA PÚBLICA — PREÇOS (usada pelo planos.html)
-// ─────────────────────────────────────────────
 app.get('/pricing', async (req, res) => {
   res.header('Access-Control-Allow-Origin', '*');
   try {
     const { getDb } = require('./config/firebase');
-    const pricing = await fetchPricing(getDb());
-    res.json(pricing);
-  } catch(e) {
+    res.json(await fetchPricing(getDb()));
+  } catch (_) {
     res.json({});
   }
 });
 
-// ─────────────────────────────────────────────
-// MERCADO PAGO — ROTAS AUTENTICADAS E WEBHOOK
-// ─────────────────────────────────────────────
-const paymentLimiter = requestLimiter({ windowMs: 60_000, max: 8 });
 const pointsLimiter = requestLimiter({ windowMs: 60_000, max: 20 });
-
-app.post('/create-payment', requireSignedInUser, paymentLimiter, async (req, res) => {
-  try {
-    const plan = String(req.body?.plan || '');
-    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: 'Plano inválido.' });
-    const userId = req.userIdentity.uid;
-    const userEmail = String(req.userIdentity.email || req.userData?.email || '').trim().toLowerCase();
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) return res.status(409).json({ error: 'Sua conta precisa ter um e-mail válido.' });
-
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-    const price = await getPlanPrice(plan, await fetchPricing(db));
-    const def = PLANOS_DEF[plan];
-    const yearly = plan.endsWith('-yearly') || plan === 'yearly';
-    const data = await mercadoPagoRequest('/preapproval', {
-      method: 'POST',
-      body: JSON.stringify({
-        reason: `Allo Finanças — ${def.label}`,
-        external_reference: `${userId}|${plan}`,
-        payer_email: userEmail,
-        auto_recurring: {
-          frequency: yearly ? 12 : 1,
-          frequency_type: 'months',
-          transaction_amount: price,
-          currency_id: 'BRL',
-        },
-        back_url: 'https://allofinancas.com/app?payment=success',
-        status: 'pending',
-        notification_url: paymentNotificationUrl(),
-      }),
-    });
-    if (!data.init_point) throw new Error('Mercado Pago não devolveu a URL de pagamento.');
-    res.json({ url: data.init_point, plan: def.label, price });
-  } catch (error) {
-    logger.error(`create-payment: ${error.message}`);
-    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível iniciar a assinatura.' });
-  }
-});
-
-app.post('/create-payment-pix', requireSignedInUser, paymentLimiter, async (req, res) => {
-  try {
-    const plan = String(req.body?.plan || '');
-    if (!PLANOS_DEF[plan]) return res.status(400).json({ error: 'Plano inválido.' });
-    const userId = req.userIdentity.uid;
-    const userEmail = String(req.userIdentity.email || req.userData?.email || '').trim().toLowerCase();
-    const userName = String(req.userData?.name || '').trim().slice(0, 100);
-    if (!/^[^\s@]+@[^\s@]+\.[^\s@]+$/.test(userEmail)) return res.status(409).json({ error: 'Sua conta precisa ter um e-mail válido.' });
-
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-    const price = await getPlanPrice(plan, await fetchPricing(db));
-    const def = PLANOS_DEF[plan];
-    const data = await mercadoPagoRequest('/checkout/preferences', {
-      method: 'POST',
-      body: JSON.stringify({
-        items: [{ title: `Allo Finanças — ${def.label}`, quantity: 1, currency_id: 'BRL', unit_price: price }],
-        payer: { email: userEmail, ...(userName ? { name: userName } : {}) },
-        external_reference: `${userId}|${plan}`,
-        back_urls: {
-          success: 'https://allofinancas.com/app?payment=success',
-          failure: 'https://allofinancas.com/app?payment=failure',
-          pending: 'https://allofinancas.com/app?payment=pending',
-        },
-        auto_return: 'approved',
-        statement_descriptor: 'Allo Financas',
-        notification_url: paymentNotificationUrl(),
-        payment_methods: { excluded_payment_types: [{ id: 'credit_card' }, { id: 'debit_card' }] },
-      }),
-    });
-    if (!data.init_point) throw new Error('Mercado Pago não devolveu a URL de pagamento.');
-    res.json({ url: data.init_point, plan: def.label, price });
-  } catch (error) {
-    logger.error(`create-payment-pix: ${error.message}`);
-    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível gerar o pagamento.' });
-  }
-});
-
-app.post('/cancel-subscription', requireSignedInUser, paymentLimiter, async (req, res) => {
-  try {
-    const userId = req.userIdentity.uid;
-    const { getDb } = require('./config/firebase');
-    const db = getDb();
-    const userDoc = await db.collection('users').doc(userId).get();
-    const userData = userDoc.data() || {};
-    const subscriptionId = String(userData.proSubscriptionId || '');
-    if (!subscriptionId) return res.status(400).json({ error: 'Nenhuma assinatura ativa.' });
-
-    const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`);
-    const reference = parseExternalReference(subscription.external_reference);
-    if (!reference || reference.userId !== userId) return res.status(403).json({ error: 'Esta assinatura não pertence à conta autenticada.' });
-
-    const updated = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`, {
-      method: 'PUT',
-      body: JSON.stringify({ status: 'canceled' }),
-    });
-    if (!['canceled', 'cancelled'].includes(String(updated.status || ''))) throw new Error('O cancelamento não foi confirmado.');
-
-    await db.collection('users').doc(userId).set({
-      proCancelled: true,
-      proCancelledAt: new Date().toISOString(),
-      proSubscriptionStatus: 'canceled',
-    }, { merge: true });
-    res.json({ success: true });
-  } catch (error) {
-    logger.error(`cancel-subscription: ${error.message}`);
-    res.status(error.status && error.status < 500 ? error.status : 502).json({ error: 'Não foi possível cancelar a assinatura.' });
-  }
-});
-
-async function claimWebhookEvent(db, eventId, metadata) {
-  const ref = db.collection('mp_webhook_events').doc(eventId);
-  return db.runTransaction(async transaction => {
-    const snap = await transaction.get(ref);
-    const current = snap.data() || {};
-    if (current.status === 'processed' || current.status === 'ignored') return false;
-    const lastAttempt = new Date(current.updatedAt || 0).getTime();
-    if (current.status === 'processing' && Date.now() - lastAttempt < 5 * 60_000) return false;
-    transaction.set(ref, {
-      ...metadata,
-      status: 'processing',
-      attempts: Number(current.attempts || 0) + 1,
-      updatedAt: new Date().toISOString(),
-      createdAt: current.createdAt || new Date().toISOString(),
-    }, { merge: true });
-    return true;
-  });
-}
-
-async function finishWebhookEvent(db, eventId, status, details = {}) {
-  await db.collection('mp_webhook_events').doc(eventId).set({
-    status,
-    ...details,
-    updatedAt: new Date().toISOString(),
-    ...(status === 'processed' || status === 'ignored' ? { processedAt: new Date().toISOString() } : {}),
-  }, { merge: true });
-}
-
-async function validatePaymentValue(db, payment, plan) {
-  const expected = Number(await getPlanPrice(plan, await fetchPricing(db)));
-  const received = Number(payment.transaction_amount ?? payment.auto_recurring?.transaction_amount);
-  const currency = String(payment.currency_id || payment.auto_recurring?.currency_id || '');
-  if (currency && currency !== 'BRL') throw new Error('Moeda divergente no pagamento.');
-  if (Number.isFinite(received) && Math.abs(received - expected) > 0.02) throw new Error('Valor divergente no pagamento.');
-}
-
-app.post('/webhook-mp', async (req, res) => {
-  const dataId = req.body?.data?.id ?? req.query?.['data.id'] ?? req.body?.id;
-  const type = String(req.body?.type || req.body?.topic || req.query?.type || req.query?.topic || '');
-  const action = String(req.body?.action || '');
-  const validSignature = verifyMercadoPagoSignature({
-    signature: req.get('x-signature'),
-    requestId: req.get('x-request-id'),
-    dataId,
-    secret: process.env.MP_WEBHOOK_SECRET,
-  });
-  if (!validSignature) return res.status(401).json({ error: 'Assinatura do webhook inválida.' });
-  if (!dataId || !type) return res.status(400).json({ error: 'Webhook sem identificação.' });
-
-  const { getDb } = require('./config/firebase');
-  const db = getDb();
-  const eventId = webhookEventId(type, dataId, action);
-  try {
-    const claimed = await claimWebhookEvent(db, eventId, { type, dataId: String(dataId), action });
-    if (!claimed) return res.sendStatus(200);
-
-    if (type === 'payment') {
-      const payment = await mercadoPagoRequest(`/v1/payments/${encodeURIComponent(dataId)}`);
-      if (payment.status !== 'approved') {
-        await finishWebhookEvent(db, eventId, 'ignored', { outcome: `payment_${payment.status || 'unknown'}` });
-        return res.sendStatus(200);
-      }
-      const reference = parseExternalReference(payment.external_reference);
-      if (!reference) throw new Error('Referência externa inválida.');
-      await validatePaymentValue(db, payment, reference.plan);
-      const update = await buildPlanUpdate(reference.plan, null, db, reference.userId);
-      await db.collection('users').doc(reference.userId).set({ ...update, proPaymentId: String(dataId) }, { merge: true });
-    } else if (type === 'subscription_preapproval') {
-      const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(dataId)}`);
-      const reference = parseExternalReference(subscription.external_reference);
-      if (!reference) throw new Error('Referência da assinatura inválida.');
-      const status = String(subscription.status || '');
-      await db.collection('users').doc(reference.userId).set({
-        proSubscriptionId: String(dataId),
-        proSubscriptionStatus: status,
-        ...(['canceled', 'cancelled'].includes(status) ? {
-          proCancelled: true,
-          proCancelledAt: new Date().toISOString(),
-        } : {}),
-      }, { merge: true });
-    } else if (type === 'subscription_authorized_payment') {
-      let authorizedPayment;
-      try {
-        authorizedPayment = await mercadoPagoRequest(`/authorized_payments/${encodeURIComponent(dataId)}`);
-      } catch (_) {
-        authorizedPayment = {};
-      }
-      const subscriptionId = authorizedPayment.preapproval_id || authorizedPayment.subscription_id || dataId;
-      const subscription = await mercadoPagoRequest(`/preapproval/${encodeURIComponent(subscriptionId)}`);
-      const reference = parseExternalReference(authorizedPayment.external_reference || subscription.external_reference);
-      if (!reference) throw new Error('Referência da renovação inválida.');
-      if (authorizedPayment.status && !['approved', 'authorized'].includes(authorizedPayment.status)) {
-        await finishWebhookEvent(db, eventId, 'ignored', { outcome: `authorized_payment_${authorizedPayment.status}` });
-        return res.sendStatus(200);
-      }
-      await validatePaymentValue(db, authorizedPayment, reference.plan);
-      const update = await buildPlanUpdate(reference.plan, subscriptionId, db, reference.userId);
-      await db.collection('users').doc(reference.userId).set(update, { merge: true });
-    } else {
-      await finishWebhookEvent(db, eventId, 'ignored', { outcome: 'unsupported_type' });
-      return res.sendStatus(200);
-    }
-
-    await finishWebhookEvent(db, eventId, 'processed');
-    return res.sendStatus(200);
-  } catch (error) {
-    logger.error(`webhook-mp ${eventId}: ${error.message}`);
-    await finishWebhookEvent(db, eventId, 'failed', { error: String(error.message).slice(0, 300) }).catch(() => {});
-    return res.status(500).json({ error: 'Falha temporária ao processar webhook.' });
-  }
+registerGooglePlayBillingRoutes(app, {
+  requireSignedInUser,
+  getDb: () => require('./config/firebase').getDb(),
 });
 
 const ALLO_POINTS_VALUES = Object.freeze({ transaction: 10, import: 30, goal_complete: 100, daily_login: 5 });
@@ -622,14 +273,23 @@ app.post('/apply-referral', async (req, res) => {
       const referrerSnap = await tx.get(referrerRef);
       if (!referrerSnap.exists) throw Object.assign(new Error('Indicador não encontrado'), { status: 404 });
       const now = new Date();
-      const trialExpires = new Date(now.getTime() + 7*86400000).toISOString();
       const referrerData = referrerSnap.data() || {};
-      const currentExpiry = new Date(referrerData.proExpiresAt || 0);
-      const base = currentExpiry > now ? currentExpiry : now;
-      const referrerExpires = new Date(base.getTime() + 30*86400000).toISOString();
+      const trialExpires = extendExpiry(userData.proReferralExpiresAt, 7, now);
+      const referrerExpires = extendExpiry(referrerData.proReferralExpiresAt, 30, now);
+      const userEntitlement = buildEffectiveProUpdate(userData, {
+        proReferralExpiresAt: trialExpires,
+        proPlan: userData.proPlan || 'referral-trial',
+        referralProcessed: true,
+        referredBy: referrerId,
+      }, now);
+      const referrerEntitlement = buildEffectiveProUpdate(referrerData, {
+        proReferralExpiresAt: referrerExpires,
+        proPlan: referrerData.proPlan || 'referral',
+        referralCount: Number(referrerData.referralCount || 0) + 1,
+      }, now);
 
-      tx.set(userRef, { isPro:true, proPlan:'trial', proSince:now.toISOString(), proExpiresAt:trialExpires, referralProcessed:true, referredBy:referrerId }, { merge:true });
-      tx.set(referrerRef, { isPro:true, proPlan:referrerData.proPlan || 'referral', proExpiresAt:referrerExpires, referralCount:(referrerData.referralCount || 0)+1 }, { merge:true });
+      tx.set(userRef, userEntitlement, { merge:true });
+      tx.set(referrerRef, referrerEntitlement, { merge:true });
       tx.set(db.collection('admin_messages').doc(), { target:'user', userId:referrerId, type:'success', title:'🎉 Sua indicação deu frutos!', body:'Um amigo usou seu código. Você ganhou mais 1 mês de Pro.', createdAt:admin.firestore.FieldValue.serverTimestamp(), createdBy:'sistema' });
       return { referrerId, trialExpires };
     });
@@ -714,7 +374,18 @@ app.get('/admin/users',requireAdminRequest,async(req,res)=>{
         isPro:profile.isPro===true,
         isMotorista:profile.isMotorista===true,
         proPlan:profile.proPlan||null,
+        proSince:profile.proSince||null,
         proExpiresAt:profile.proExpiresAt||null,
+        proCancelled:profile.proCancelled===true,
+        proCancelledAt:profile.proCancelledAt||null,
+        proManualExpiresAt:profile.proManualExpiresAt||null,
+        proPrizeExpiresAt:profile.proPrizeExpiresAt||null,
+        proReferralExpiresAt:profile.proReferralExpiresAt||null,
+        proBillingProvider:profile.proBillingProvider||null,
+        googlePlayProductId:profile.googlePlayProductId||null,
+        googlePlaySubscriptionState:profile.googlePlaySubscriptionState||null,
+        googlePlayAutoRenewing:profile.googlePlayAutoRenewing===true,
+        googlePlayExpiresAt:profile.googlePlayExpiresAt||null,
         motoristaExpiresAt:profile.motoristaExpiresAt||null,
         banned:profile.banned===true||authUser.disabled===true,
         lastActiveAt:profile.lastActiveAt||profile.lastLogin||null,
@@ -766,6 +437,50 @@ app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
       await db.collection('users').doc(uid).set({...(update.displayName&&{name:update.displayName}),...(update.email&&{email:update.email}),updatedAt:new Date().toISOString()},{merge:true});
       await writeAdminAudit(req,action,uid,'success',{fields:Object.keys(update)});
       return res.json({ok:true,user:serializeAuthUser(changed)});
+    }else if(action==='grant-manual-pro'||action==='extend-manual-pro'){
+      const now=new Date();
+      const requestedDays=action==='grant-manual-pro'
+        ? (req.body?.plan==='yearly'?365:30)
+        : Number.parseInt(req.body?.days,10);
+      if(!Number.isInteger(requestedDays)||requestedDays<1||requestedDays>3650){
+        return res.status(400).json({error:'Prazo de acesso Pro inválido'});
+      }
+      const baseMs=Math.max(now.getTime(),toMillis(target.proExpiresAt),toMillis(target.proManualExpiresAt));
+      const manualExpiresAt=new Date(baseMs+requestedDays*86400000).toISOString();
+      const plan=action==='grant-manual-pro'
+        ? (req.body?.plan==='yearly'?'pro-yearly':'pro-monthly')
+        : (target.proPlan||'pro-monthly');
+      const update=buildEffectiveProUpdate(target,{
+        proManualExpiresAt:manualExpiresAt,
+        proBillingProvider:'manual',
+        proPlan:plan,
+        proCancelled:false,
+        proCancelledAt:null,
+      },now);
+      await db.collection('users').doc(uid).set(update,{merge:true});
+      await writeAdminAudit(req,action,uid,'success',{days:requestedDays,expiresAt:manualExpiresAt,plan});
+      return res.json({ok:true,action,uid,expiresAt:update.proExpiresAt,isPro:update.isPro});
+    }else if(action==='revoke-manual-pro'){
+      const now=new Date();
+      const remainingSources=[
+        {provider:'google_play',expiry:target.googlePlayExpiresAt,plan:productToPlan(target.googlePlayProductId)||target.proPlan||'pro-monthly'},
+        {provider:'ranking',expiry:target.proPrizeExpiresAt,plan:'ranking-prize'},
+        {provider:'referral',expiry:target.proReferralExpiresAt,plan:'referral'},
+        {provider:'legacy',expiry:target.legacyProExpiresAt,plan:target.proPlan||'legacy'},
+      ].filter(item=>toMillis(item.expiry)>now.getTime())
+       .sort((a,b)=>toMillis(b.expiry)-toMillis(a.expiry));
+      const remaining=remainingSources[0]||null;
+      const update=buildEffectiveProUpdate(target,{
+        proManualExpiresAt:null,
+        proBillingProvider:remaining?.provider||null,
+        proPlan:remaining?.plan||null,
+        proCancelled:remaining?.provider==='google_play'
+          ? (target.googlePlayAutoRenewing!==true||target.googlePlaySubscriptionState==='SUBSCRIPTION_STATE_CANCELED')
+          : false,
+      },now);
+      await db.collection('users').doc(uid).set(update,{merge:true});
+      await writeAdminAudit(req,action,uid,'success',{remainingProvider:remaining?.provider||null});
+      return res.json({ok:true,action,uid,expiresAt:update.proExpiresAt,isPro:update.isPro});
     }else if(action==='delete-account'){
       await admin.auth().deleteUser(uid);
       if(req.body?.deleteData===true){
@@ -791,7 +506,7 @@ app.get('/health', handleHealthCheck);
 app.post('/allofy-chat', requireAllofyUser, aiRateLimiter('allofy'), handleAllofyChat);
 app.get('/allofy-history', requireAiUser, getAllofyHistory);
 app.delete('/allofy-history', requireAiUser, clearAllofyHistory);
-app.get('/', (req, res) => res.json({ service: 'Allo API', status: 'running' }));
+app.get('/', (req, res) => res.json({ service: 'Allo API', billing: 'google_play', status: 'running' }));
 
 // ═══════════════════════════════════════════════════
 // NOTIFICAÇÕES PERSONALIZADAS
@@ -1027,16 +742,14 @@ async function apurarRankingMensal(){
       const parent=parentSnap.data()||{};
       if(parent.apuratedAt||parent.finalizationStatus==='processed')return;
       const user=userSnap.data()||{};const now=new Date();
-      const expiresAt=extendExpiry(user.proExpiresAt,30,now);
-      transaction.set(winnerRef,{
-        isPro:true,
+      const prizeExpiresAt=extendExpiry(user.proPrizeExpiresAt,30,now);
+      transaction.set(winnerRef,buildEffectiveProUpdate(user,{
         proPlan:user.proPlan||'ranking-prize',
-        proSince:user.proSince||now.toISOString(),
-        proExpiresAt:expiresAt,
+        proPrizeExpiresAt:prizeExpiresAt,
         proAwardedBy:'ranking',
         proAwardMonth:monthKey,
         proPrizeDays:Number(user.proPrizeDays||0)+30,
-      },{merge:true});
+      },now),{merge:true});
       transaction.set(parentRef,{
         winner:{id:winner.id,name:winnerData.name||'Usuário',points:Number(winnerData.points||0)},
         apuratedAt:now.toISOString(),
@@ -1096,6 +809,26 @@ setTimeout(()=>apurarRankingMensal(),5_000);
 cron.schedule('20 */6 * * *',()=>apurarRankingMensal());
 
 // ─────────────────────────────────────────────
+// GOOGLE PLAY — RECONCILIAÇÃO RECUPERÁVEL
+// ─────────────────────────────────────────────
+async function reconcileGooglePlaySubscriptions(source = 'internal') {
+  try {
+    const { getDb } = require('./config/firebase');
+    const result = await reconcileStoredPurchases(getDb(), 200);
+    logger.info(`🧾 Google Play (${source}): ${result.checked} verificadas, ${result.updated} atualizadas, ${result.failed} falhas.`);
+    return result;
+  } catch (error) {
+    // Enquanto as credenciais ainda não forem configuradas, o restante da API
+    // continua funcionando normalmente.
+    logger.warn(`Reconciliação Google Play (${source}) não executada: ${error.message}`);
+    return null;
+  }
+}
+
+setTimeout(() => reconcileGooglePlaySubscriptions('startup'), 15_000);
+cron.schedule('35 */6 * * *', () => reconcileGooglePlaySubscriptions('cron'));
+
+// ─────────────────────────────────────────────
 // JOB DIÁRIO — VERIFICA EXPIRAÇÃO DO PRO
 // ─────────────────────────────────────────────
 async function checkProExpirations(){
@@ -1106,36 +839,17 @@ async function checkProExpirations(){
     const snap = await db.collection('users').where('isPro','==',true).get();
 
     for(const doc of snap.docs){
-      const data = doc.data();
-      if(!data.proExpiresAt) continue;
-
-      const expiresAt = new Date(data.proExpiresAt);
-      const daysLeft = Math.ceil((expiresAt - now) / (1000*60*60*24));
-
-      // Desativa se expirou
-      if(daysLeft <= 0){
-        await db.collection('users').doc(doc.id).set({
-          isPro: false,
-          proExpired: true,
-          proExpiredAt: now.toISOString()
-        }, { merge: true });
-        console.log('❌ PRO expirado para:', doc.id);
-        continue;
-      }
-
-      // Salva dias restantes para o app exibir
-      await db.collection('users').doc(doc.id).set({
-        proDaysLeft: daysLeft
-      }, { merge: true });
-
-      console.log('⏳ PRO:', doc.id, '- dias restantes:', daysLeft);
+      const data = doc.data() || {};
+      const update = buildEffectiveProUpdate(data, {}, now);
+      await doc.ref.set(update, { merge: true });
+      logger.info(`${update.isPro ? '⏳' : '❌'} PRO ${doc.id}: ${update.proDaysLeft} dia(s) restante(s)`);
     }
-  } catch(e){
-    console.error('checkProExpirations error:', e);
+  } catch(error){
+    logger.error(`checkProExpirations: ${error.message}`);
   }
 }
 
-// Roda imediatamente e depois a cada 24h
+// Roda imediatamente e depois a cada 24h.
 checkProExpirations();
 setInterval(checkProExpirations, 24 * 60 * 60 * 1000);
 

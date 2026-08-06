@@ -1,6 +1,6 @@
-# Allo Finanças API
+# Allofy API V40 — Google Play Billing
 
-Backend do Allo Finanças para pagamentos, importação de faturas, Allofy, AlloPoints, notificações push e administração segura do Firebase Authentication.
+Backend do Allofy para assinatura Pro pela Google Play, IA, importação de faturas, notificações, AlloPoints e administração segura.
 
 ## Execução
 
@@ -9,39 +9,46 @@ npm install
 npm start
 ```
 
-O serviço exige as credenciais do Firebase Admin e a chave da OpenAI. Consulte `.env.example` e configure os segredos no ambiente de hospedagem, sem adicioná-los ao repositório.
+Node.js 18 ou superior.
 
-## Configuração no Render
+## Variáveis principais
 
-Configure as variáveis abaixo no painel **Environment** do serviço:
+Consulte `.env.example`. Os segredos devem ficar no Render, nunca no frontend ou no GitHub.
 
-- `GOOGLE_CREDENTIALS`: JSON completo da conta de serviço do Firebase
-- `OPENAI_API_KEY`: chave secreta criada no projeto da OpenAI
-- `OPENAI_MODEL`: `gpt-5.6-luna`
-- `ALLOWED_ORIGINS`: `https://allofinancas.com,https://www.allofinancas.com`
-- `ALLOFY_DAILY_LIMIT`: limite diário por usuário (padrão: `20`)
-- `AI_MINUTE_LIMIT`: proteção contra muitas solicitações seguidas (padrão: `8`)
+- `GOOGLE_CREDENTIALS`: credencial do Firebase Admin.
+- `GOOGLE_PLAY_CREDENTIALS`: conta de serviço com acesso à Google Play Developer API. Pode ser a mesma credencial, desde que tenha as permissões necessárias no Play Console.
+- `GOOGLE_PLAY_PACKAGE_NAME`: `com.allofinancas`.
+- `GOOGLE_PLAY_PRODUCT_MONTHLY`: `allofy_pro_monthly`.
+- `GOOGLE_PLAY_PRODUCT_YEARLY`: `allofy_pro_yearly`.
+- `GOOGLE_PLAY_RTDN_AUDIENCE`: URL exata do endpoint RTDN.
+- `GOOGLE_PLAY_RTDN_SERVICE_ACCOUNT`: conta de serviço usada para assinar o push Pub/Sub.
+- `CRON_SECRET`: segredo longo usado pela reconciliação protegida.
 
-Nunca coloque `OPENAI_API_KEY` no código do site ou no GitHub. Depois de atualizar o repositório do backend, faça um novo deploy no Render antes de publicar o frontend.
+## Rotas Google Play
 
-## Rotas principais
+- `GET /google-play/config` — retorna pacote e IDs públicos dos produtos.
+- `GET /google-play/status` — estado da assinatura do usuário autenticado.
+- `POST /google-play/verify-subscription` — valida o `purchaseToken` na Google Play, registra a compra, reconhece a assinatura e recalcula o direito Pro.
+- `POST /google-play/rtdn` — recebe notificações autenticadas do Pub/Sub.
+- `POST /google-play/reconcile` — reconciliação protegida por `x-cron-secret`.
 
-- `GET /health` — saúde da API
-- `GET /pricing` — preços dos planos
-- `POST /create-payment` e `POST /create-payment-pix` — pagamentos
-- `POST /webhook-mp` — retorno do Mercado Pago
-- `POST /import-pdf` — importação estruturada de fatura
-- `POST /ai-analysis` — análise financeira e importações por texto/imagem
-- `POST /allofy-chat` — assistente financeiro com ferramentas de consulta
-- `GET /allofy-history` — histórico autenticado do Allofy
-- `DELETE /allofy-history` — apaga o histórico do usuário
-- `GET /admin/health` — saúde da integração administrativa
-- `GET /admin/users` — metadados reais das contas do Firebase Authentication
-- `GET /admin/users/:uid` — identidade e acesso de uma conta
-- `POST /admin/users/:uid/action` — bloquear, revogar sessões, verificar e-mail, atualizar ou excluir conta
+As rotas antigas de PIX e Mercado Pago não fazem parte da V40.
 
-Todas as rotas de inteligência artificial e `/admin/*` exigem um token Firebase válido. O Allofy deriva o usuário do token, nunca de um identificador enviado pelo navegador. As rotas de IA também aplicam limites por minuto e por dia no servidor.
+## Segurança da assinatura
 
-O Allofy usa a Responses API da OpenAI com o modelo configurado em `OPENAI_MODEL`, histórico salvo no Firebase e ferramentas de leitura para consultar transações, contas, cartões, metas, dívidas, cofres e o módulo motorista. Ele não altera dados financeiros autonomamente.
+- O UID vem do token Firebase autenticado.
+- O navegador nunca decide se uma assinatura é válida.
+- O backend usa `purchases.subscriptionsv2.get` como fonte do estado.
+- Cada token fica vinculado a uma única conta.
+- A compra é reconhecida no servidor.
+- Tokens antigos não encurtam uma assinatura mais nova.
+- Validades de prêmio, indicação, liberação manual e legado são preservadas separadamente.
+- As coleções `google_play_purchases` e `google_play_rtdn_events` são inacessíveis pelo cliente.
 
-O nome público da API permanece independente do domínio atual de hospedagem, preservando a compatibilidade com o aplicativo.
+## Outras rotas
+
+As rotas de IA, importação, Allofy, AlloPoints, notificações e `/admin/*` permanecem no `src/server.js`. Rotas sensíveis exigem autenticação Firebase e as rotas administrativas exigem conta Admin.
+
+## Implantação
+
+Leia `IMPLANTACAO-GOOGLE-PLAY-V40.md` antes de publicar.

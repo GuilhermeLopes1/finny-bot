@@ -22,10 +22,11 @@ test('Allofy e análise carregam contexto das subcoleções V39', () => {
   assert.match(tools, /return hydrateProfile\(uid\)/);
 });
 
-test('regras impedem escrita do cliente em pontos, ranking e webhooks', () => {
+test('regras impedem escrita do cliente em pontos, ranking e coleções do Google Play', () => {
   const rules = read('firestore_rules.txt');
-  assert.match(rules, /match \/ap_history\/\{documentId\}[\s\S]*allow write: if false/);
-  assert.match(rules, /match \/ap_ranking\/\{month\}[\s\S]*allow write: if false/);
-  assert.match(rules, /match \/mp_webhook_events\/\{document\} \{ allow read, write: if false; \}/);
+  assert.match(rules, /match \/ap_history\/\{documentId\}[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/ap_ranking\/\{month\}[\s\S]*allow create, update, delete: if false/);
+  assert.match(rules, /match \/google_play_purchases\/\{documentId\} \{ allow read, write: if false; \}/);
+  assert.match(rules, /match \/google_play_rtdn_events\/\{documentId\} \{ allow read, write: if false; \}/);
   assert.match(rules, /'alloPoints'/);
 });
