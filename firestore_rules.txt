@@ -166,6 +166,7 @@ service cloud.firestore {
 
     // Coleções internas do backend. O Firebase Admin SDK ignora estas regras.
     match /google_play_purchases/{documentId} { allow read, write: if false; }
+    match /google_play_account_links/{documentId} { allow read, write: if false; }
     match /google_play_rtdn_events/{documentId} { allow read, write: if false; }
     match /notification_devices/{documentId} { allow read, write: if false; }
     match /allofy_conversations/{document=**} { allow read, write: if false; }

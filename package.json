@@ -1,6 +1,6 @@
 {
   "name": "allo-financas-api",
-  "version": "4.0.0",
+  "version": "4.2.2",
   "description": "API do Allofy para Google Play Billing, IA, importação, notificações e administração protegida",
   "main": "src/server.js",
   "scripts": {
