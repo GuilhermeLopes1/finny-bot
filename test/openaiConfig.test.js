@@ -2,7 +2,7 @@ const test = require('node:test');
 const assert = require('node:assert/strict');
 const { createResponse, outputText, ALLOFY_MODEL } = require('../src/config/openai');
 
-test('configura Luna e desativa armazenamento nas respostas', async () => {
+test('configura o agente forte e desativa armazenamento nas respostas', async () => {
   const originalFetch = global.fetch;
   const originalKey = process.env.OPENAI_API_KEY;
   let captured;
@@ -16,7 +16,7 @@ test('configura Luna e desativa armazenamento nas respostas', async () => {
     assert.equal(outputText(response), 'ok');
     assert.equal(captured.model, ALLOFY_MODEL);
     assert.equal(captured.store, false);
-    assert.deepEqual(captured.reasoning, { effort: 'none' });
+    assert.deepEqual(captured.reasoning, { effort: 'max' });
   } finally {
     global.fetch = originalFetch;
     if (originalKey === undefined) delete process.env.OPENAI_API_KEY;
