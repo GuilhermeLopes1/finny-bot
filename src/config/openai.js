@@ -1,7 +1,8 @@
 const logger = require('../utils/logger');
 
 const OPENAI_URL = 'https://api.openai.com/v1/responses';
-const ALLOFY_MODEL = process.env.OPENAI_MODEL || 'gpt-5.6-luna';
+const ALLOFY_MODEL = process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6';
+const ALLOFY_REASONING_EFFORT = process.env.OPENAI_REASONING_EFFORT || 'max';
 
 function assertConfigured() {
   if (!process.env.OPENAI_API_KEY) {
@@ -11,27 +12,23 @@ function assertConfigured() {
   }
 }
 
-async function createResponse(payload) {
+async function createResponse(payload = {}) {
   assertConfigured();
   const controller = new AbortController();
-  const timeout = setTimeout(() => controller.abort(), Number(process.env.OPENAI_TIMEOUT_MS || 45000));
-
+  const timeout = setTimeout(() => controller.abort(), Number(process.env.OPENAI_TIMEOUT_MS || 90000));
+  const { model, reasoning, ...rest } = payload;
   try {
     const response = await fetch(OPENAI_URL, {
       method: 'POST',
-      headers: {
-        Authorization: `Bearer ${process.env.OPENAI_API_KEY}`,
-        'Content-Type': 'application/json',
-      },
+      headers: { Authorization: `Bearer ${process.env.OPENAI_API_KEY}`, 'Content-Type': 'application/json' },
       body: JSON.stringify({
-        model: ALLOFY_MODEL,
+        model: model || ALLOFY_MODEL,
         store: false,
-        reasoning: { effort: 'none' },
-        ...payload,
+        reasoning: reasoning || { effort: ALLOFY_REASONING_EFFORT },
+        ...rest,
       }),
       signal: controller.signal,
     });
-
     const data = await response.json().catch(() => ({}));
     if (!response.ok) {
       const error = new Error(data?.error?.message || `OpenAI respondeu HTTP ${response.status}`);
@@ -54,35 +51,22 @@ async function createResponse(payload) {
 
 function outputText(response) {
   if (typeof response?.output_text === 'string') return response.output_text.trim();
-  return (response?.output || [])
-    .flatMap(item => item?.content || [])
+  return (response?.output || []).flatMap(item => item?.content || [])
     .filter(item => item?.type === 'output_text' && typeof item.text === 'string')
-    .map(item => item.text)
-    .join('\n')
-    .trim();
+    .map(item => item.text).join('\n').trim();
 }
 
 async function createStructuredResponse({ instructions, input, name, schema, maxOutputTokens = 1600 }) {
   const response = await createResponse({
-    instructions,
-    input,
-    max_output_tokens: maxOutputTokens,
-    text: {
-      format: {
-        type: 'json_schema',
-        name,
-        strict: true,
-        schema,
-      },
-    },
+    instructions, input, max_output_tokens: maxOutputTokens,
+    text: { format: { type: 'json_schema', name, strict: true, schema } },
   });
   const raw = outputText(response);
-  try {
-    return JSON.parse(raw);
-  } catch (error) {
+  try { return JSON.parse(raw); }
+  catch (error) {
     logger.error('OpenAI structured output inválido', { name, responseId: response?.id });
     throw new Error('A IA retornou uma resposta estruturada inválida');
   }
 }
 
-module.exports = { ALLOFY_MODEL, createResponse, createStructuredResponse, outputText };
+module.exports = { ALLOFY_MODEL, ALLOFY_REASONING_EFFORT, createResponse, createStructuredResponse, outputText, assertConfigured };
