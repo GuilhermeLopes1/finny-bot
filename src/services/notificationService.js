@@ -106,6 +106,8 @@ const DEFAULT_NOTIFICATION_PREFERENCES = Object.freeze({
   cardAlerts: true,
   weeklySummary: true,
   inactivityReminder: false,
+  supportMessages: true,
+  aiUsageAlerts: true,
   timezone: 'America/Sao_Paulo',
 });
 
@@ -136,6 +138,8 @@ function normalizeNotificationPreferences(raw = {}) {
     cardAlerts: raw.cardAlerts !== false,
     weeklySummary: raw.weeklySummary !== false,
     inactivityReminder: raw.inactivityReminder === true,
+    supportMessages: raw.supportMessages !== false,
+    aiUsageAlerts: raw.aiUsageAlerts !== false,
     timezone: validTimeZone(raw.timezone),
   };
 }
@@ -237,7 +241,7 @@ function buildDailySummary(profile = {}, now = new Date()) {
   const balanceSign = totals.balance >= 0 ? '+' : '-';
 
   return {
-    title: `📊 Resumo diário de ${firstName}`,
+    title: `✨ Bom dia, ${firstName}! Seu dinheiro em um olhar`,
     body: `Saldo do mês: ${balanceSign}${money(Math.abs(totals.balance))} · Gastos: ${money(totals.expenses)} · Faturas abertas: ${money(accounts.totalInvoicesOpen)} · Bancos: ${money(bankBalance)}`,
     tag: 'daily-summary',
     url: '/app?action=open-dashboard&via=notification',
@@ -269,7 +273,7 @@ function buildWeeklySummary(profile = {}, now = new Date()) {
 
   const balance = income - expenses;
   return {
-    title: '📅 Seu resumo dos últimos 7 dias',
+    title: '✨ Sua semana financeira está pronta',
     body: `Entradas: ${money(income)} · Saídas: ${money(expenses)} · Resultado: ${balance >= 0 ? '+' : '-'}${money(Math.abs(balance))}`,
     tag: 'weekly-summary',
     url: '/app?action=open-dashboard&via=notification',
@@ -434,8 +438,8 @@ async function processUserNotifications(userId, profile, now = new Date()) {
     for (const bill of upcomingBills(profile, now)) {
       const when = bill.days === 0 ? 'vence hoje' : `vence em ${bill.days} dia${bill.days === 1 ? '' : 's'}`;
       if (await sendOnce(userId, profile, `bill:${bill.id}:${bill.dueDate}`, {
-        title: '⚠️ Conta vencendo em breve',
-        body: `${bill.description} — ${money(bill.amount)} ${when}.`,
+        title: '⏰ Uma conta pede sua atenção',
+        body: `${bill.description}: ${money(bill.amount)} ${when}. Abra o Allofy para conferir.`,
         tag: `bill-${bill.id}`,
         url: '/app?action=open-calendar&via=notification',
       }, now)) sent += 1;
@@ -447,8 +451,8 @@ async function processUserNotifications(userId, profile, now = new Date()) {
       const when = card.days === 0 ? 'vence hoje' : `vence em ${card.days} dia${card.days === 1 ? '' : 's'}`;
       const cardKey = crypto.createHash('sha1').update(`${card.name}|${card.dueDate}`).digest('hex').slice(0, 12);
       if (await sendOnce(userId, profile, `card:${cardKey}:${card.dueDate}`, {
-        title: `💳 Fatura ${card.name}`,
-        body: `${money(card.totalOpen)} em aberto e ${when}.`,
+        title: `💳 Sua fatura ${card.name} está chegando`,
+        body: `${money(card.totalOpen)} em aberto e ${when}. Veja os detalhes no Allofy.`,
         tag: `card-${cardKey}`,
         url: '/app?action=open-cards&via=notification',
       }, now)) sent += 1;
@@ -461,8 +465,8 @@ async function processUserNotifications(userId, profile, now = new Date()) {
 
   if (preferences.inactivityReminder && local.hour * 60 + local.minute >= 20 * 60 && !hasTransactionToday(profile, now)) {
     if (await sendOnce(userId, profile, `inactive:${local.dateKey}`, {
-      title: '📝 Registrou seus gastos de hoje?',
-      body: 'Leva poucos segundos e mantém seu resumo financeiro sempre atualizado.',
+      title: '📝 Fechou o dia? O Allofy te ajuda',
+      body: 'Registre o que entrou ou saiu hoje em poucos segundos e mantenha seu mês sempre em dia.',
       tag: 'inactivity-reminder',
       url: '/app?action=add-expense&via=notification',
     }, now)) sent += 1;
