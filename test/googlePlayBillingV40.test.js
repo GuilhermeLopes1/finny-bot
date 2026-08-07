@@ -37,8 +37,10 @@ test('servidor não oferece rotas externas de pagamento', () => {
 
 test('variáveis de ambiente não incluem segredos do Mercado Pago', () => {
   const env = read('.env.example');
+  assert.match(env, /GOOGLE_PLAY_CREDENTIALS=/);
   assert.match(env, /GOOGLE_PLAY_PACKAGE_NAME=com\.allofinancas/);
   assert.match(env, /GOOGLE_PLAY_PRODUCT_MONTHLY=allofy_pro_monthly/);
+  assert.match(env, /GOOGLE_PLAY_PRODUCT_YEARLY=allofy_pro_yearly/);
   assert.match(env, /GOOGLE_PLAY_RTDN_AUDIENCE=/);
   assert.doesNotMatch(env, /MP_ACCESS_TOKEN|MP_WEBHOOK_SECRET/);
 });
@@ -50,4 +52,20 @@ test('concessões administrativas usam fontes separadas e recalculam o direito P
   assert.match(server, /revoke-manual-pro/);
   assert.match(server, /buildEffectiveProUpdate/);
   assert.match(server, /proManualExpiresAt/);
+});
+
+
+test('credenciais da Google Play não usam a conta do Firebase como fallback', () => {
+  const service = read('src/services/googlePlayBillingService.js');
+  assert.match(service, /GOOGLE_PLAY_CREDENTIALS/);
+  assert.doesNotMatch(service, /GOOGLE_PLAY_CREDENTIALS\s*\|\|\s*process\.env\.GOOGLE_CREDENTIALS/);
+  assert.match(service, /BEGIN PRIVATE KEY/);
+});
+
+test('erros de permissão recebem código estável e resposta temporária', () => {
+  const controller = read('src/controllers/googlePlayBillingController.js');
+  assert.match(controller, /google_play_permission_pending/);
+  assert.match(controller, /retryable:\s*true/);
+  assert.match(controller, /tokenHash\(purchaseToken\)\.slice/);
+  assert.doesNotMatch(controller, /purchaseToken=\$\{/);
 });
