@@ -170,6 +170,10 @@ service cloud.firestore {
     match /google_play_rtdn_events/{documentId} { allow read, write: if false; }
     match /notification_devices/{documentId} { allow read, write: if false; }
     match /allofy_conversations/{document=**} { allow read, write: if false; }
+    match /allofy_usage/{documentId} { allow read, write: if false; }
+    match /allofy_live_leases/{documentId} { allow read, write: if false; }
+    match /allofy_action_logs/{documentId} { allow read, write: if false; }
+    match /allofy_ai_feedback/{documentId} { allow read, write: if false; }
 
     match /{document=**} {
       allow read, write: if false;
