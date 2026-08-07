@@ -12,6 +12,8 @@ const DEFAULT_PRODUCTS = Object.freeze({
   monthly: 'allofy_pro_monthly',
   yearly: 'allofy_pro_yearly',
 });
+const OWNERSHIP_VERSION = 2;
+const DEFAULT_FRESH_PURCHASE_WINDOW_MS = 30 * 60 * 1000;
 
 let publisherAuth;
 let rtdnVerifier;
@@ -39,19 +41,37 @@ function allowedProductIds() {
 }
 
 function parseCredentials() {
-  const raw = process.env.GOOGLE_PLAY_CREDENTIALS || process.env.GOOGLE_CREDENTIALS;
+  // Não usar GOOGLE_CREDENTIALS como fallback: ela pertence ao Firebase Admin
+  // em instalações antigas e pode apontar para outra conta de serviço.
+  const raw = String(process.env.GOOGLE_PLAY_CREDENTIALS || '').trim();
   if (!raw) {
-    throw Object.assign(new Error('Credenciais da Google Play não configuradas.'), { status: 503 });
+    throw Object.assign(new Error('GOOGLE_PLAY_CREDENTIALS não configurada.'), {
+      status: 503,
+      code: 'google_play_credentials_missing',
+    });
   }
 
   let credentials;
   try {
     credentials = JSON.parse(raw);
   } catch (error) {
-    throw Object.assign(new Error(`Credenciais da Google Play inválidas: ${error.message}`), { status: 503 });
+    throw Object.assign(new Error(`GOOGLE_PLAY_CREDENTIALS contém JSON inválido: ${error.message}`), {
+      status: 503,
+      code: 'google_play_credentials_invalid',
+    });
   }
 
   if (credentials.private_key) credentials.private_key = credentials.private_key.replace(/\\n/g, '\n');
+  if (
+    credentials.type !== 'service_account' ||
+    !String(credentials.client_email || '').includes('@') ||
+    !String(credentials.private_key || '').includes('BEGIN PRIVATE KEY')
+  ) {
+    throw Object.assign(new Error('GOOGLE_PLAY_CREDENTIALS não contém uma conta de serviço válida.'), {
+      status: 503,
+      code: 'google_play_credentials_invalid',
+    });
+  }
   return credentials;
 }
 
@@ -67,6 +87,28 @@ function getPublisherAuth() {
 
 function tokenHash(token) {
   return crypto.createHash('sha256').update(String(token)).digest('hex');
+}
+
+function obfuscatedAccountIdForUid(uid) {
+  return crypto.createHash('sha256').update(`allofy:${String(uid || '').trim()}`).digest('hex');
+}
+
+function freshPurchaseWindowMs() {
+  const minutes = Number(process.env.GOOGLE_PLAY_FRESH_PURCHASE_WINDOW_MINUTES || 30);
+  if (!Number.isFinite(minutes) || minutes < 5 || minutes > 180) return DEFAULT_FRESH_PURCHASE_WINDOW_MS;
+  return Math.round(minutes * 60 * 1000);
+}
+
+function isFreshUnacknowledgedPurchase(summary = {}, now = new Date()) {
+  if (summary.acknowledged === true) return false;
+  const startMs = toMillis(summary.startTime);
+  if (!startMs) return false;
+  const ageMs = now.getTime() - startMs;
+  return ageMs >= -60_000 && ageMs <= freshPurchaseWindowMs();
+}
+
+function storedOwnerIsTrusted(record = {}) {
+  return Boolean(record.uid) && Number(record.ownershipVersion || 0) >= OWNERSHIP_VERSION;
 }
 
 function ensureValidToken(value) {
@@ -88,6 +130,7 @@ async function publisherRequest({ method = 'GET', url, data }) {
     logger.warn(`Google Play API ${method} falhou (${status}): ${providerMessage}`);
     throw Object.assign(new Error(providerMessage || 'Falha na Google Play Developer API.'), {
       status: status >= 400 && status < 600 ? status : 502,
+      code: error.response?.data?.error?.status || 'google_play_api_error',
       providerData: error.response?.data,
     });
   }
@@ -114,13 +157,31 @@ async function getSubscriptionPurchaseWithRetry(purchaseToken, attempts = 4) {
   throw lastError;
 }
 
-async function acknowledgeSubscription(purchaseToken, productId) {
+async function acknowledgeSubscription(purchaseToken, productId, options = {}) {
   const token = ensureValidToken(purchaseToken);
   if (!allowedProductIds().has(productId)) {
     throw Object.assign(new Error('Produto da assinatura não autorizado.'), { status: 400 });
   }
   const url = `https://androidpublisher.googleapis.com/androidpublisher/v3/applications/${encodeURIComponent(packageName())}/purchases/subscriptions/${encodeURIComponent(productId)}/tokens/${encodeURIComponent(token)}:acknowledge`;
-  await publisherRequest({ method: 'POST', url, data: {} });
+  const data = {};
+  const obfuscatedAccountId = String(options.obfuscatedAccountId || '').trim();
+  if (obfuscatedAccountId) {
+    data.externalAccountIds = { obfuscatedAccountId };
+  }
+
+  try {
+    await publisherRequest({ method: 'POST', url, data });
+  } catch (error) {
+    // A Google Play só aceita externalAccountIds em alguns fluxos de
+    // re-assinatura. Se o provedor recusar apenas esse metadado, reconheça
+    // novamente sem ele para não deixar uma compra legítima sem ACK.
+    if (obfuscatedAccountId && Number(error.status) === 400) {
+      logger.warn('Google Play recusou externalAccountIds no acknowledge; repetindo sem o identificador ofuscado.');
+      await publisherRequest({ method: 'POST', url, data: {} });
+      return;
+    }
+    throw error;
+  }
 }
 
 function latestExpiry(lineItems = []) {
@@ -167,6 +228,8 @@ function normalizePurchase(purchase = {}, requestedProductId = null, now = new D
     latestOrderId: purchase.latestOrderId || null,
     linkedPurchaseToken: purchase.linkedPurchaseToken || null,
     expiredPurchaseToken: purchase.outOfAppPurchaseContext?.expiredPurchaseToken || null,
+    externalAccountId: purchase.externalAccountIdentifiers?.obfuscatedAccountId || null,
+    expiredExternalAccountId: purchase.outOfAppPurchaseContext?.expiredExternalAccountIdentifiers?.obfuscatedAccountId || null,
     startTime: purchase.startTime || null,
     testPurchase: Boolean(purchase.testPurchase),
     regionCode: purchase.regionCode || null,
@@ -247,45 +310,133 @@ async function recomputeGooglePlayEntitlementForUser(db, uid, now = new Date()) 
 
 async function syncPurchaseForUser(db, uid, purchaseToken, summary, options = {}) {
   const token = ensureValidToken(purchaseToken);
-  const purchaseRef = db.collection('google_play_purchases').doc(tokenHash(token));
+  const purchaseHash = tokenHash(token);
+  const purchaseRef = db.collection('google_play_purchases').doc(purchaseHash);
   const userRef = db.collection('users').doc(uid);
+  const accountId = obfuscatedAccountIdForUid(uid);
+  const accountLinkRef = db.collection('google_play_account_links').doc(accountId);
   const now = options.now || new Date();
+  const linkedHash = summary.linkedPurchaseToken ? tokenHash(summary.linkedPurchaseToken) : null;
+  const linkedRef = linkedHash && linkedHash !== purchaseHash
+    ? db.collection('google_play_purchases').doc(linkedHash)
+    : null;
+  let previousLinkedUid = null;
+  let ownershipHandoff = false;
 
   await db.runTransaction(async transaction => {
-    const [purchaseSnap, userSnap] = await Promise.all([
-      transaction.get(purchaseRef),
-      transaction.get(userRef),
-    ]);
+    const reads = [transaction.get(purchaseRef), transaction.get(userRef)];
+    if (linkedRef) reads.push(transaction.get(linkedRef));
+    const snapshots = await Promise.all(reads);
+    const purchaseSnap = snapshots[0];
+    const userSnap = snapshots[1];
+    const linkedSnap = linkedRef ? snapshots[2] : null;
 
     const existingPurchase = purchaseSnap.data() || {};
-    if (existingPurchase.uid && existingPurchase.uid !== uid) {
-      throw Object.assign(new Error('Esta compra já está vinculada a outra conta.'), { status: 409 });
+    const linkedPurchase = linkedSnap?.data() || {};
+
+    if (!userSnap.exists) {
+      throw Object.assign(new Error('Conta do usuário não encontrada.'), {
+        status: 404,
+        code: 'google_play_user_not_found',
+      });
     }
-    if (!userSnap.exists) throw Object.assign(new Error('Conta do usuário não encontrada.'), { status: 404 });
+
+    // O token atual é a chave primária do direito. Um token já vinculado nunca
+    // muda de conta automaticamente, nem durante uma restauração.
+    if (existingPurchase.uid && existingPurchase.uid !== uid) {
+      throw Object.assign(new Error('Esta compra já está vinculada a outra conta.'), {
+        status: 409,
+        code: 'google_play_token_owner_mismatch',
+      });
+    }
+
+    // Quando a Google Play devolve um identificador de conta ofuscado, ele é
+    // uma evidência forte de titularidade e deve corresponder ao usuário atual.
+    if (summary.externalAccountId && summary.externalAccountId !== accountId) {
+      throw Object.assign(new Error('A identificação da conta na Google Play não corresponde à conta atual.'), {
+        status: 409,
+        code: 'google_play_external_account_mismatch',
+      });
+    }
+
+    if (linkedPurchase.uid && linkedPurchase.uid !== uid) {
+      // linkedPurchaseToken é histórico. Para não herdar para sempre um vínculo
+      // legado incorreto, uma compra NOVA, ainda não reconhecida e feita há
+      // poucos minutos pode ser vinculada ao UID autenticado que acabou de
+      // concluir o checkout. Uma restauração antiga/ACK não recebe essa exceção.
+      const allowFreshPurchaseHandoff = !existingPurchase.uid && isFreshUnacknowledgedPurchase(summary, now);
+      if (!allowFreshPurchaseHandoff) {
+        throw Object.assign(new Error('A assinatura anterior pertence a outra conta.'), {
+          status: 409,
+          code: 'google_play_linked_owner_mismatch',
+        });
+      }
+
+      previousLinkedUid = linkedPurchase.uid;
+      ownershipHandoff = true;
+      transaction.set(linkedRef, {
+        entitled: false,
+        supersededByPurchaseTokenHash: purchaseHash,
+        supersededAt: now.toISOString(),
+        supersededReason: 'google_play_linked_purchase',
+        ownershipConflictDetectedAt: now.toISOString(),
+        ownershipConflictResolvedBy: 'fresh_authenticated_purchase',
+        updatedAt: now.toISOString(),
+      }, { merge: true });
+    }
+
+    const remainsSuperseded = Boolean(existingPurchase.supersededByPurchaseTokenHash);
+    const effectiveEntitled = summary.entitled === true && !remainsSuperseded;
+    const ownershipSource = existingPurchase.ownershipSource
+      || options.ownershipSource
+      || (ownershipHandoff ? 'fresh_authenticated_purchase' : 'authenticated_verify');
 
     transaction.set(purchaseRef, {
       uid,
+      ownerUidHash: accountId,
+      ownershipVersion: OWNERSHIP_VERSION,
+      ownershipSource,
+      ownershipLinkedAt: existingPurchase.ownershipLinkedAt || now.toISOString(),
+      ownershipVerifiedAt: now.toISOString(),
       purchaseToken: token,
-      purchaseTokenHash: tokenHash(token),
+      purchaseTokenHash: purchaseHash,
       productId: summary.productId,
       plan: summary.plan,
       state: summary.state,
-      entitled: summary.entitled,
+      entitled: effectiveEntitled,
       expiryTime: summary.expiryTime,
       autoRenewing: summary.autoRenewing,
       acknowledgementState: summary.acknowledgementState,
       latestOrderId: summary.latestOrderId,
-      linkedPurchaseTokenHash: summary.linkedPurchaseToken ? tokenHash(summary.linkedPurchaseToken) : null,
+      linkedPurchaseTokenHash: linkedHash,
       expiredPurchaseTokenHash: summary.expiredPurchaseToken ? tokenHash(summary.expiredPurchaseToken) : null,
+      externalAccountId: summary.externalAccountId || null,
+      expiredExternalAccountId: summary.expiredExternalAccountId || null,
       testPurchase: summary.testPurchase,
       regionCode: summary.regionCode,
       updatedAt: now.toISOString(),
       createdAt: existingPurchase.createdAt || now.toISOString(),
     }, { merge: true });
+
+    transaction.set(accountLinkRef, {
+      uid,
+      obfuscatedAccountId: accountId,
+      updatedAt: now.toISOString(),
+      createdAt: now.toISOString(),
+    }, { merge: true });
   });
 
+  if (ownershipHandoff) {
+    logger.warn(`Google Play: vínculo histórico divergente ignorado para compra nova e recente. oldUid=${previousLinkedUid} newUid=${uid} tokenHash=${purchaseHash.slice(0, 12)}`);
+  }
+
   await recomputeGooglePlayEntitlementForUser(db, uid, now);
-  return purchaseRef;
+  if (previousLinkedUid && previousLinkedUid !== uid) {
+    await recomputeGooglePlayEntitlementForUser(db, previousLinkedUid, now).catch(error => {
+      logger.warn(`Google Play: não foi possível recalcular o usuário antigo após substituição: ${error.message}`);
+    });
+  }
+  return { purchaseRef, ownershipHandoff, previousLinkedUid };
 }
 
 async function markPurchaseAcknowledged(db, uid, purchaseToken) {
@@ -300,22 +451,19 @@ async function markPurchaseAcknowledged(db, uid, purchaseToken) {
 
 async function verifyAndSyncPurchase(db, uid, purchaseToken, requestedProductId = null, options = {}) {
   const token = ensureValidToken(purchaseToken);
+  const now = options.now || new Date();
   const purchase = options.purchase || await getSubscriptionPurchaseWithRetry(token);
-  const summary = normalizePurchase(purchase, requestedProductId, options.now || new Date());
+  const summary = normalizePurchase(purchase, requestedProductId, now);
 
-  if (summary.linkedPurchaseToken) {
-    const linkedSnap = await db.collection('google_play_purchases').doc(tokenHash(summary.linkedPurchaseToken)).get();
-    const linked = linkedSnap.data() || {};
-    if (linked.uid && linked.uid !== uid) {
-      throw Object.assign(new Error('A assinatura anterior pertence a outra conta.'), { status: 409 });
-    }
-  }
-
-  await syncPurchaseForUser(db, uid, token, summary, options);
+  const syncResult = await syncPurchaseForUser(db, uid, token, summary, { ...options, now });
+  summary.ownershipHandoff = syncResult.ownershipHandoff === true;
 
   if (summary.entitled && !summary.acknowledged) {
+    const isResubscription = Boolean(summary.linkedPurchaseToken || summary.expiredPurchaseToken);
     try {
-      await acknowledgeSubscription(token, summary.productId);
+      await acknowledgeSubscription(token, summary.productId, {
+        obfuscatedAccountId: isResubscription ? obfuscatedAccountIdForUid(uid) : null,
+      });
       summary.acknowledged = true;
       summary.acknowledgementState = 'ACKNOWLEDGEMENT_STATE_ACKNOWLEDGED';
       await markPurchaseAcknowledged(db, uid, token);
@@ -373,17 +521,39 @@ function decodeRtdnEnvelope(body = {}) {
   };
 }
 
+async function resolveUidByObfuscatedAccountId(db, obfuscatedAccountId) {
+  const id = String(obfuscatedAccountId || '').trim();
+  if (!id) return null;
+  const snap = await db.collection('google_play_account_links').doc(id).get();
+  return snap.exists && snap.data()?.uid ? snap.data().uid : null;
+}
+
 async function resolveUidForPurchase(db, purchaseToken, purchase) {
   const direct = await db.collection('google_play_purchases').doc(tokenHash(purchaseToken)).get();
   if (direct.exists && direct.data()?.uid) return direct.data().uid;
+
+  const externalAccountId = purchase?.externalAccountIdentifiers?.obfuscatedAccountId;
+  const externalUid = await resolveUidByObfuscatedAccountId(db, externalAccountId);
+  if (externalUid) return externalUid;
+
   if (purchase?.linkedPurchaseToken) {
     const linked = await db.collection('google_play_purchases').doc(tokenHash(purchase.linkedPurchaseToken)).get();
-    if (linked.exists && linked.data()?.uid) return linked.data().uid;
+    const linkedData = linked.data() || {};
+    // RTDN não deve perpetuar automaticamente um vínculo legado que nunca foi
+    // verificado pela política V42.2. Se não houver identificador externo e o
+    // histórico for antigo, deixe a notificação órfã até o app autenticar o UID.
+    if (linked.exists && storedOwnerIsTrusted(linkedData)) return linkedData.uid;
   }
+
+  const expiredExternalAccountId = purchase?.outOfAppPurchaseContext?.expiredExternalAccountIdentifiers?.obfuscatedAccountId;
+  const expiredExternalUid = await resolveUidByObfuscatedAccountId(db, expiredExternalAccountId);
+  if (expiredExternalUid) return expiredExternalUid;
+
   const expiredPurchaseToken = purchase?.outOfAppPurchaseContext?.expiredPurchaseToken;
   if (expiredPurchaseToken) {
     const expired = await db.collection('google_play_purchases').doc(tokenHash(expiredPurchaseToken)).get();
-    if (expired.exists && expired.data()?.uid) return expired.data().uid;
+    const expiredData = expired.data() || {};
+    if (expired.exists && storedOwnerIsTrusted(expiredData)) return expiredData.uid;
   }
   return null;
 }
@@ -416,6 +586,9 @@ module.exports = {
   productConfig,
   productToPlan,
   tokenHash,
+  obfuscatedAccountIdForUid,
+  isFreshUnacknowledgedPurchase,
+  storedOwnerIsTrusted,
   normalizePurchase,
   getSubscriptionPurchase,
   getSubscriptionPurchaseWithRetry,
@@ -427,6 +600,7 @@ module.exports = {
   verifyAndSyncPurchase,
   verifyRtdnOidcToken,
   decodeRtdnEnvelope,
+  resolveUidByObfuscatedAccountId,
   resolveUidForPurchase,
   reconcileStoredPurchases,
 };
