@@ -29,11 +29,21 @@ function realtimeTools() {
   }));
 }
 
-function realtimeInstructions() {
-  return `${INSTRUCTIONS}\n\nMODO AO VIVO:\n- Você está em uma conversa de voz em tempo real. Fale naturalmente em português brasileiro.\n- Priorize respostas curtas e fluidas, mas pense com cuidado antes de executar ferramentas.\n- Quando uma ferramenta for necessária, use-a antes de afirmar qualquer dado ou ação.\n- Depois de uma ação bem-sucedida, confirme em uma frase curta com valor, descrição e origem quando relevante.\n- Se a ferramenta devolver confirmation_required, explique exatamente o que será alterado e aguarde uma nova confirmação do usuário.\n- Aceite interrupções naturais: pare de falar e ouça quando o usuário interromper.\n- Nunca leia IDs técnicos, hashes ou tokens em voz alta.`;
+function realtimeFirstName(userData = {}) {
+  const raw = String(userData?.name || userData?.displayName || '').trim();
+  if (!raw) return '';
+  return raw.split(/\s+/)[0].replace(/[^\p{L}\p{M}'’-]/gu, '').slice(0, 40);
 }
 
-function buildRealtimeSession({ native = false } = {}) {
+function realtimeInstructions(userData = {}) {
+  const firstName = realtimeFirstName(userData);
+  const nameContext = firstName
+    ? `\n- O primeiro nome do usuário é ${firstName}. Em saudações, pode chamá-lo pelo primeiro nome de forma natural.`
+    : '';
+  return `${INSTRUCTIONS}\n\nMODO AO VIVO:\n- Você está em uma conversa de voz em tempo real. Fale naturalmente em português brasileiro.${nameContext}\n- Ao iniciar uma nova sessão e receber uma instrução de saudação, cumprimente de forma curta, diga que está ouvindo e espere o pedido do usuário.\n- Priorize respostas curtas e fluidas, mas pense com cuidado antes de executar ferramentas.\n- Quando uma ferramenta for necessária, use-a antes de afirmar qualquer dado ou ação.\n- Depois de uma ação bem-sucedida, confirme em uma frase curta com valor, descrição e origem quando relevante.\n- Se a ferramenta devolver confirmation_required, explique exatamente o que será alterado e aguarde uma nova confirmação do usuário.\n- Aceite interrupções naturais: pare de falar e ouça quando o usuário interromper.\n- Nunca leia IDs técnicos, hashes ou tokens em voz alta.`;
+}
+
+function buildRealtimeSession({ native = false, userData = {} } = {}) {
   const input = {
     noise_reduction: { type: 'near_field' },
     transcription: {
@@ -56,7 +66,7 @@ function buildRealtimeSession({ native = false } = {}) {
   return {
     type: 'realtime',
     model: REALTIME_MODEL,
-    instructions: realtimeInstructions(),
+    instructions: realtimeInstructions(userData),
     output_modalities: ['audio'],
     tool_choice: 'auto',
     tools: realtimeTools(),
@@ -71,7 +81,7 @@ async function createRealtimeCall(req, res) {
   try {
     assertConfigured();
     lease = await reserveLiveSession(req.userIdentity.uid, req.userData || {});
-    const session = buildRealtimeSession({ native: false });
+    const session = buildRealtimeSession({ native: false, userData: req.userData || {} });
     const form = new FormData();
     form.set('sdp', sdp);
     form.set('session', JSON.stringify(session));
@@ -127,7 +137,7 @@ async function createNativeRealtimeSecret(req, res) {
           'Content-Type': 'application/json',
           'OpenAI-Safety-Identifier': safetyIdentifier(req.userIdentity?.uid),
         },
-        body: JSON.stringify({ session: buildRealtimeSession({ native: true }) }),
+        body: JSON.stringify({ session: buildRealtimeSession({ native: true, userData: req.userData || {} }) }),
         signal: controller.signal,
       });
     } finally { clearTimeout(timeout); }
