@@ -374,13 +374,29 @@ async function syncPurchaseForUser(db, uid, purchaseToken, summary, options = {}
 
       previousLinkedUid = linkedPurchase.uid;
       ownershipHandoff = true;
+    }
+
+    // V42.3: linkedPurchaseToken identifica a compra anterior substituída pela
+    // compra atual. Depois que a titularidade da compra atual foi validada,
+    // aposente SEMPRE o registro anterior conhecido — inclusive quando os dois
+    // tokens pertencem ao mesmo UID. Isso evita que o token antigo continue
+    // elegível e siga concedendo Pro em paralelo.
+    //
+    // Se o histórico pertencia a outro UID, só chegamos aqui quando a exceção
+    // segura de compra nova/recente acima autorizou o handoff.
+    if (linkedRef && linkedSnap?.exists) {
+      const alreadySupersededByCurrent = linkedPurchase.supersededByPurchaseTokenHash === purchaseHash;
       transaction.set(linkedRef, {
         entitled: false,
         supersededByPurchaseTokenHash: purchaseHash,
-        supersededAt: now.toISOString(),
+        supersededAt: alreadySupersededByCurrent && linkedPurchase.supersededAt
+          ? linkedPurchase.supersededAt
+          : now.toISOString(),
         supersededReason: 'google_play_linked_purchase',
-        ownershipConflictDetectedAt: now.toISOString(),
-        ownershipConflictResolvedBy: 'fresh_authenticated_purchase',
+        ...(ownershipHandoff ? {
+          ownershipConflictDetectedAt: linkedPurchase.ownershipConflictDetectedAt || now.toISOString(),
+          ownershipConflictResolvedBy: 'fresh_authenticated_purchase',
+        } : {}),
         updatedAt: now.toISOString(),
       }, { merge: true });
     }

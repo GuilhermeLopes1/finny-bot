@@ -8,7 +8,9 @@ function toMillis(value) {
 
 function activePurchaseRecord(records = [], now = new Date()) {
   return records
-    .filter(record => record?.entitled === true && toMillis(record.expiryTime) > now.getTime())
+    .filter(record => record?.entitled === true
+      && !record?.supersededByPurchaseTokenHash
+      && toMillis(record.expiryTime) > now.getTime())
     .sort((a, b) => toMillis(b.expiryTime) - toMillis(a.expiryTime))[0] || null;
 }
 
