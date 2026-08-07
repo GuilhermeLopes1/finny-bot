@@ -48,16 +48,52 @@ function uniqueMatch(query, items, fields) {
   if (!q) return { item: null, matches: [] };
   const idMatch = items.find(item => String(item.id || '') === String(query));
   if (idMatch) return { item: idMatch, matches: [idMatch] };
-  const exact = items.filter(item => fields.some(field => normalize(item?.[field]) === q));
+
+  // Campos opcionais ausentes viram string vazia. Antes, q.includes('') era true
+  // e fazia itens sem um dos aliases (ex.: categoria sem `nome`) parecerem match.
+  const normalizedValues = item => fields.map(field => normalize(item?.[field])).filter(Boolean);
+  const exact = items.filter(item => normalizedValues(item).some(value => value === q));
   if (exact.length === 1) return { item: exact[0], matches: exact };
   if (exact.length > 1) return { item: null, matches: exact };
-  const partial = items.filter(item => fields.some(field => normalize(item?.[field]).includes(q) || q.includes(normalize(item?.[field]))));
+  const partial = items.filter(item => normalizedValues(item).some(value => value.includes(q) || q.includes(value)));
   return { item: partial.length === 1 ? partial[0] : null, matches: partial };
 }
 
 function bankLabel(bank = {}) { return text(bank.accountName || bank.nickname || bank.apelido || bank.name || bank.institution || 'Conta', 100); }
 function cardLabel(card = {}) { return text(card.name || card.nome || card.brand || 'Cartão', 100); }
 function categoryLabel(category = {}) { return text(category.name || category.nome || 'Outros', 100); }
+
+// V44.2 — linguagem natural -> categorias padrão/cadastradas.
+// Evita falhar uma compra só porque a IA disse "Comida" e a categoria
+// cadastrada se chama "Alimentação", por exemplo.
+const CATEGORY_FAMILIES = {
+  alimentacao: ['alimentacao','comida','refeicao','lanche','salgado','padaria','mercado','supermercado','restaurante','delivery','ifood','pizza','cafe','cafeteria'],
+  transporte: ['transporte','uber','99','taxi','onibus','metro','combustivel','gasolina','etanol','diesel','posto','pedagio','estacionamento'],
+  moradia: ['moradia','casa','aluguel','condominio','iptu','energia','luz','agua','gas','internet'],
+  saude: ['saude','farmacia','remedio','medico','dentista','hospital','clinica','exame','psicologo','psicologa'],
+  educacao: ['educacao','escola','faculdade','curso','livro','material escolar','mensalidade'],
+  lazer: ['lazer','cinema','jogo','games','netflix','spotify','show','entretenimento'],
+  salario: ['salario','renda','pagamento','adiantamento','freela','freelance','comissao'],
+  investimentos: ['investimentos','investimento','aporte','dividendo','cdb','tesouro','acao','acoes','fundo'],
+  outros: ['outros','outro','diversos','diverso'],
+};
+
+function categoryFamily(value) {
+  const q = normalize(value);
+  if (!q) return '';
+  for (const [family, aliases] of Object.entries(CATEGORY_FAMILIES)) {
+    if (aliases.some(alias => q === alias || q.includes(alias))) return family;
+  }
+  return '';
+}
+
+function categoryKindMatches(category, kind = '') {
+  if (!kind) return true;
+  const raw = normalize(category?.kind || category?.type || category?.tipo);
+  if (!raw || raw === 'both' || raw === 'ambos') return true;
+  if (kind === 'income') return ['income','receita','renda'].includes(raw);
+  return ['expense','despesa','gasto'].includes(raw);
+}
 
 function resolveBank(profile, query, required = false) {
   if (!query) return required ? resultError('bank_required', 'Informe qual conta bancária deve ser usada.') : { ok: true, item: null };
@@ -75,12 +111,32 @@ function resolveCard(profile, query, required = false) {
   return resultError('card_not_found', `Não encontrei o cartão “${text(query, 80)}”.`);
 }
 
-function resolveCategory(profile, query, kind = '') {
+function resolveCategory(profile, query, kind = '', description = '') {
+  const categories = Array.isArray(profile.categories) ? profile.categories : [];
+  if (!query && !description) return { ok: true, item: null };
+
+  // 1) Nome/ID informado pelo usuário ou pela IA tem prioridade.
+  if (query) {
+    const { item, matches } = uniqueMatch(query, categories, ['name', 'nome']);
+    if (item && categoryKindMatches(item, kind)) return { ok: true, item };
+    const compatibleMatches = matches.filter(category => categoryKindMatches(category, kind));
+    if (compatibleMatches.length === 1) return { ok: true, item: compatibleMatches[0] };
+    if (compatibleMatches.length > 1) return resultError('category_ambiguous', 'Encontrei mais de uma categoria parecida. Diga o nome exato.', { choices: compatibleMatches.slice(0, 8).map(c => ({ id: c.id, name: categoryLabel(c) })) });
+  }
+
+  // 2) Aceita sinônimos naturais. Ex.: Comida/Salgado -> Alimentação.
+  const family = categoryFamily(query) || categoryFamily(description);
+  if (family) {
+    const familyMatches = categories.filter(category =>
+      categoryKindMatches(category, kind) && categoryFamily(categoryLabel(category)) === family
+    );
+    if (familyMatches.length === 1) return { ok: true, item: familyMatches[0], normalizedFrom: text(query || description, 80) };
+    if (familyMatches.length > 1) return resultError('category_ambiguous', 'Encontrei mais de uma categoria compatível. Diga qual delas deve ser usada.', { choices: familyMatches.slice(0, 8).map(c => ({ id: c.id, name: categoryLabel(c) })) });
+  }
+
+  // Categoria continua opcional quando a frase não informa nenhuma.
   if (!query) return { ok: true, item: null };
-  const { item, matches } = uniqueMatch(query, profile.categories || [], ['name', 'nome']);
-  if (item) return { ok: true, item };
-  if (matches.length > 1) return resultError('category_ambiguous', 'Encontrei mais de uma categoria parecida. Diga o nome exato.', { choices: matches.slice(0, 8).map(c => ({ id: c.id, name: categoryLabel(c) })) });
-  return resultError('category_not_found', `Não encontrei a categoria “${text(query, 80)}”. Cadastre-a ou peça ao Allofy para criar a categoria.` , { suggestedKind: kind || null });
+  return resultError('category_not_found', `Não encontrei uma categoria cadastrada compatível com “${text(query, 80)}”. Diga o nome da categoria que deseja usar.` , { suggestedKind: kind || null });
 }
 
 function resolveGoal(profile, query) {
@@ -159,7 +215,7 @@ async function createTransaction(uid, args, context) {
   const description = text(args.description, 160);
   if (!description) return resultError('description_required', 'Informe uma descrição para o lançamento.');
   const bankResult = resolveBank(profile, args.account, false); if (!bankResult.ok) return bankResult;
-  const categoryResult = resolveCategory(profile, args.category, type); if (!categoryResult.ok && args.category) return categoryResult;
+  const categoryResult = resolveCategory(profile, args.category, type, description); if (!categoryResult.ok && args.category) return categoryResult;
   const bank = bankResult.item;
   const category = categoryResult.item;
   const status = ['paid', 'pending'].includes(args.status) ? args.status : 'paid';
@@ -199,8 +255,9 @@ async function createTransaction(uid, args, context) {
 async function createCardPurchase(uid, args, context) {
   const profile = await freshProfile(uid);
   const cardResult = resolveCard(profile, args.card, true); if (!cardResult.ok) return cardResult;
-  const categoryResult = resolveCategory(profile, args.category, 'expense'); if (!categoryResult.ok && args.category) return categoryResult;
+  const categoryResult = resolveCategory(profile, args.category, 'expense', args.description); if (!categoryResult.ok && args.category) return categoryResult;
   const card = cardResult.item;
+  const category = categoryResult.item;
   const amount = money(args.amount);
   const installments = Math.max(1, Math.min(60, Number(args.installments || 1) | 0));
   if (!(amount > 0)) return resultError('invalid_amount', 'Informe um valor maior que zero.');
