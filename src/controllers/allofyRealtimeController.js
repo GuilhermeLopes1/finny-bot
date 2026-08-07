@@ -61,7 +61,7 @@ function buildRealtimeSession({ native = false, userData = {} } = {}) {
   const output = { voice: REALTIME_VOICE, speed: 1.0 };
   if (native) {
     input.format = { type: 'audio/pcm', rate: 24000 };
-    output.format = { type: 'audio/pcm' };
+    output.format = { type: 'audio/pcm', rate: 24000 };
   }
   return {
     type: 'realtime',
