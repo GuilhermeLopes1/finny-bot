@@ -26,10 +26,14 @@ require('./config/firebase');
 const { handleHealthCheck } = require('./controllers/healthController');
 const logger = require('./utils/logger');
 const { handleAllofyChat, getAllofyHistory, clearAllofyHistory } = require('./controllers/allofyController');
+const { createRealtimeCall, createNativeRealtimeSecret, executeRealtimeTool, transcribeAllofyAudio, handleFinishLive } = require('./controllers/allofyRealtimeController');
+const { handleAllofyFeedback } = require('./controllers/allofyFeedbackController');
+const { provisionVoiceKeyForDevice, authenticateNativeVoiceRequest } = require('./services/nativeVoiceDeviceService');
 const { handlePdfImport, handleAiAnalysis } = require('./controllers/aiController');
 const { requireFirebaseUser } = require('./middleware/firebaseAuth');
 const { aiRateLimiter } = require('./middleware/aiRateLimiter');
-const { runNotificationCycle, sendPushToProfile, hasNotificationTarget } = require('./services/notificationService');
+const { runNotificationCycle, sendPushToProfile, hasNotificationTarget, normalizeNotificationPreferences } = require('./services/notificationService');
+const { handleUsage } = require('./services/allofyUsageService');
 const { registerGooglePlayBillingRoutes } = require('./controllers/googlePlayBillingController');
 const { reconcileStoredPurchases, productToPlan } = require('./services/googlePlayBillingService');
 const { buildEffectiveProUpdate, toMillis } = require('./services/proEntitlementService');
@@ -55,7 +59,7 @@ app.use(cors({
     if (!origin || configuredOrigins.includes(origin)) return callback(null, true);
     return callback(new Error('Origem não autorizada pelo CORS'));
   },
-  allowedHeaders: ['Content-Type', 'Authorization'],
+  allowedHeaders: ['Content-Type', 'Authorization', 'X-Allofy-Install-Id', 'X-Allofy-Device-Key'],
   methods: ['GET', 'POST', 'DELETE', 'OPTIONS'],
 }));
 app.use(express.json({ limit: '10mb' }));
@@ -71,12 +75,16 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) }
 // ─────────────────────────────────────────────
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
+const voiceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
 
 const requireAiUser = requireFirebaseUser({ requirePro: true });
-const requireAllofyUser = requireFirebaseUser({ requirePro: true, dataKeys: [
+const ALLOFY_DATA_KEYS = [
   'transactions','banks','cards','categories','goals','debts','benefits','cofres',
   'uberJornadas','uberCorridas','uberGastos','uberAbastec','uberVeiculos','cardTransactions'
-] });
+];
+// V44: Allofy Essencial também existe no plano gratuito. Somente Live/ferramentas avançadas exigem Pro.
+const requireAllofyUser = requireFirebaseUser({ dataKeys: ALLOFY_DATA_KEYS });
+const requireAllofyPro = requireFirebaseUser({ requirePro: true, dataKeys: ALLOFY_DATA_KEYS });
 const requireSignedInUser = requireFirebaseUser();
 app.post('/import-pdf', requireAiUser, aiRateLimiter('import'), upload.single('file'), handlePdfImport);
 
@@ -354,6 +362,36 @@ app.get('/admin/health',requireAdminRequest,async(req,res)=>{
   res.json({ok:true,service:'Allo Admin API',projectId:admin.app().options.projectId||null,time:new Date().toISOString()});
 });
 
+app.post('/admin/support/notify-reply', requireAdminRequest, requestLimiter({ windowMs: 60_000, max: 60 }), async (req, res) => {
+  const userId = String(req.body?.userId || '').trim();
+  const ticketId = String(req.body?.ticketId || '').trim().slice(0, 160);
+  const subject = String(req.body?.subject || 'Seu chamado').trim().slice(0, 120);
+  if (!/^[A-Za-z0-9_-]{8,160}$/.test(userId)) return res.status(400).json({ error: 'Usuário inválido.' });
+  try {
+    const { getDb } = require('./config/firebase');
+    const snap = await getDb().collection('users').doc(userId).get();
+    if (!snap.exists) return res.status(404).json({ error: 'Usuário não encontrado.' });
+    const profile = snap.data() || {};
+    const prefs = normalizeNotificationPreferences(profile.notificationPreferences || {});
+    if (!prefs.enabled || prefs.supportMessages === false || profile.pushEnabled === false || !hasNotificationTarget(profile)) {
+      await writeAdminAudit(req, 'support.reply.push', userId, 'skipped', { ticketId, reason: 'notifications_disabled' });
+      return res.json({ ok: true, sent: false, reason: 'notifications_disabled' });
+    }
+    const sent = await sendPushToProfile(userId, profile, {
+      title: '💬 Tem resposta nova para você',
+      body: `${subject || 'Seu chamado'} recebeu uma resposta da equipe Allofy. Toque para continuar a conversa.`,
+      tag: `support-reply-${ticketId || userId}`,
+      url: `/app?action=open-support&ticketId=${encodeURIComponent(ticketId)}&via=notification`,
+    });
+    await writeAdminAudit(req, 'support.reply.push', userId, sent ? 'success' : 'skipped', { ticketId });
+    res.json({ ok: true, sent: Boolean(sent) });
+  } catch (error) {
+    logger.warn(`Support reply notification: ${error.message}`);
+    await writeAdminAudit(req, 'support.reply.push', userId, 'error', { ticketId, message: error.message });
+    res.status(500).json({ error: 'A resposta foi salva, mas a notificação não pôde ser enviada.' });
+  }
+});
+
 app.get('/admin/users',requireAdminRequest,async(req,res)=>{
   try{
     const {admin,getDb}=require('./config/firebase');
@@ -503,9 +541,19 @@ app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
  * Health check
  */
 app.get('/health', handleHealthCheck);
-app.post('/allofy-chat', requireAllofyUser, aiRateLimiter('allofy'), handleAllofyChat);
-app.get('/allofy-history', requireAiUser, getAllofyHistory);
-app.delete('/allofy-history', requireAiUser, clearAllofyHistory);
+const allofyRequestLimiter = requestLimiter({ windowMs: 60_000, max: Number(process.env.ALLOFY_MINUTE_LIMIT || 30) });
+app.post('/allofy-chat', requireAllofyUser, allofyRequestLimiter, handleAllofyChat);
+app.post('/allofy-transcribe', requireAllofyUser, requestLimiter({ windowMs: 60_000, max: 15 }), voiceUpload.single('audio'), transcribeAllofyAudio);
+app.post('/allofy-realtime/connect', requireAllofyPro, requestLimiter({ windowMs: 60_000, max: 10 }), createRealtimeCall);
+app.post('/allofy-realtime/end', requireAllofyPro, requestLimiter({ windowMs: 60_000, max: 20 }), handleFinishLive);
+app.post('/allofy-tool', requireAllofyPro, requestLimiter({ windowMs: 60_000, max: 60 }), executeRealtimeTool);
+app.post('/allofy-native/realtime-token', authenticateNativeVoiceRequest, requestLimiter({ windowMs: 60_000, max: 10 }), createNativeRealtimeSecret);
+app.post('/allofy-native/realtime-end', authenticateNativeVoiceRequest, requestLimiter({ windowMs: 60_000, max: 20 }), handleFinishLive);
+app.post('/allofy-native/tool', authenticateNativeVoiceRequest, requestLimiter({ windowMs: 60_000, max: 60 }), executeRealtimeTool);
+app.post('/allofy-feedback', requireSignedInUser, requestLimiter({ windowMs: 60_000, max: 20 }), handleAllofyFeedback);
+app.get('/allofy-usage', requireAllofyUser, handleUsage);
+app.get('/allofy-history', requireAllofyUser, getAllofyHistory);
+app.delete('/allofy-history', requireAllofyUser, clearAllofyHistory);
 app.get('/', (req, res) => res.json({ service: 'Allo API', billing: 'google_play', status: 'running' }));
 
 // ═══════════════════════════════════════════════════
@@ -593,7 +641,10 @@ app.post('/notifications/native/device', async (req, res) => {
     };
 
     await ref.set(device, { merge: true });
-    if (device.userId) await saveDeviceOnUser(device.userId, installId, device);
+    if (device.userId) {
+      await saveDeviceOnUser(device.userId, installId, device);
+      await provisionVoiceKeyForDevice(ref, device, { force: false });
+    }
 
     return res.json({ ok: true, bound: Boolean(device.userId) });
   } catch (error) {
@@ -628,12 +679,47 @@ app.post('/notifications/native/bind', requireSignedInUser, async (req, res) => 
     }
 
     await saveDeviceOnUser(userId, installId, device);
-    await ref.set({ userId, boundAt: new Date().toISOString() }, { merge: true });
+    const boundAt = new Date().toISOString();
+    await ref.set({ userId, boundAt }, { merge: true });
+    const provision = await provisionVoiceKeyForDevice(ref, { ...device, installId, userId }, { force: true });
 
-    return res.json({ ok: true, channel: 'native' });
+    return res.json({ ok: true, channel: 'native', voiceProvisioned: provision.provisioned === true });
   } catch (error) {
     logger.warn(`Vínculo FCM nativo falhou: ${error.message}`);
     return res.status(500).json({ error: 'Não foi possível vincular este aparelho à conta.' });
+  }
+});
+
+
+// Remove o vínculo do widget antes do logout. A chave local pode continuar no aparelho,
+// mas o hash é invalidado no servidor e deixa de autenticar imediatamente.
+app.post('/notifications/native/unbind', requireSignedInUser, async (req, res) => {
+  try {
+    const installId = String(req.body?.installId || '').trim();
+    if (!validNativeInstallId(installId)) {
+      return res.status(400).json({ error: 'Identificador do aplicativo inválido.' });
+    }
+    const { getDb, admin } = require('./config/firebase');
+    const db = getDb();
+    const ref = db.collection('notification_devices').doc(nativeDeviceDocumentId(installId));
+    const snap = await ref.get();
+    const device = snap.data() || {};
+    if (!snap.exists) return res.json({ ok: true, unbound: false });
+    if (device.userId && device.userId !== req.userIdentity.uid) {
+      return res.status(403).json({ error: 'Este aparelho está vinculado a outra conta.' });
+    }
+    await removeDeviceFromUser(req.userIdentity.uid, installId);
+    await ref.set({
+      userId: null,
+      voiceEnabled: false,
+      voiceUnboundAt: new Date().toISOString(),
+      voiceKeyHash: admin.firestore.FieldValue.delete(),
+      voiceKeyIssuedAt: admin.firestore.FieldValue.delete(),
+    }, { merge: true });
+    return res.json({ ok: true, unbound: true });
+  } catch (error) {
+    logger.warn(`Desvínculo FCM nativo falhou: ${error.message}`);
+    return res.status(500).json({ error: 'Não foi possível desvincular este aparelho.' });
   }
 });
 
