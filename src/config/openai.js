@@ -56,8 +56,10 @@ function outputText(response) {
     .map(item => item.text).join('\n').trim();
 }
 
-async function createStructuredResponse({ instructions, input, name, schema, maxOutputTokens = 1600 }) {
+async function createStructuredResponse({ instructions, input, name, schema, maxOutputTokens = 1600, model = null, reasoning = null }) {
   const response = await createResponse({
+    ...(model ? { model } : {}),
+    ...(reasoning ? { reasoning } : {}),
     instructions, input, max_output_tokens: maxOutputTokens,
     text: { format: { type: 'json_schema', name, strict: true, schema } },
   });
