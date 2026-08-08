@@ -59,6 +59,9 @@ REGRAS DE DADOS — OBRIGATÓRIAS:
 - No plano Pro, trate pedidos de edição como operações reais: use edit_transactions para corrigir ou mover lançamentos, delete_bank_account para excluir contas com segurança, bulk_delete_transactions para exclusões em massa e manage_app_entities para demais cadastros.
 - Você tem autonomia operacional sobre os dados do próprio usuário dentro do Allo. Não responda “não consigo alterar” sem antes verificar se uma ferramenta disponível executa a mudança.
 - Para pedidos complexos, faça todas as leituras e chamadas necessárias em sequência até concluir a tarefa inteira. Não pare após alterar apenas o primeiro item.
+- Quando o usuário fornecer VÁRIOS lançamentos do mesmo cartão em texto, CSV ou lista, use apply_card_statement_batch em uma única chamada em vez de create_card_purchase repetidas vezes. A ferramenta também pode atualizar limite, vencimento e fechamento no mesmo pedido.
+- Em extrato/fatura, valores negativos descritos como “pagamento recebido”, “crédito”, “estorno” ou equivalente devem ser enviados como kind=credit e amount positivo em apply_card_statement_batch; não transforme o sinal negativo em uma nova compra.
+- Se o próprio pedido já disser claramente “faça”, “lance”, “registre”, “pode fazer” ou equivalente para o lote informado, isso é confirmação suficiente para confirmed=true nessa ferramenta.
 - Alterações em massa devem usar IDs reais retornados pelas ferramentas de leitura. Nunca invente identificadores.
 - A autonomia não inclui plano/assinatura, role/admin, Google Play Billing, credenciais, coleções internas da IA ou qualquer dado de outro usuário.
 - Depois de qualquer ferramenta de escrita, use o resultado retornado como fonte de verdade. Se precisar consultar o efeito na mesma resposta, faça uma nova ferramenta de leitura.
@@ -179,7 +182,7 @@ async function runAllofy(uid, profile, message, history, options = {}) {
     text: { verbosity: policy.tier === 'free' ? 'low' : 'medium' },
   });
   let response = await callModel();
-  const maxRounds = policy.tier === 'free' ? 5 : 20;
+  const maxRounds = policy.tier === 'free' ? 5 : 10;
 
   for (let round = 0; round < maxRounds; round += 1) {
     const calls = (response.output || []).filter(item => item.type === 'function_call');
@@ -232,7 +235,14 @@ async function runAllofy(uid, profile, message, history, options = {}) {
     }
     response = await callModel();
   }
-  throw new Error('O Allofy excedeu o limite de ferramentas desta resposta');
+  logger.warn('Allofy encerrou uma resposta por limite de rodadas de ferramentas', { uid, tier: policy.tier, mutations: mutations.length });
+  const completed = mutations.length;
+  return {
+    reply: completed
+      ? `Concluí ${completed} ação${completed === 1 ? '' : 'ões'}, mas o pedido ficou grande demais para finalizar com segurança em uma única resposta. Confira o que foi alterado e me peça para continuar apenas com o que faltar.`
+      : 'Esse pedido ficou complexo demais para concluir com segurança de uma vez. Tente dividir em duas partes ou informar os lançamentos do mesmo cartão em uma única lista.',
+    mutations, policy, incomplete: true,
+  };
 }
 
 async function handleAllofyChat(req, res) {
