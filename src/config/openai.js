@@ -34,6 +34,7 @@ async function createResponse(payload = {}) {
       const error = new Error(data?.error?.message || `OpenAI respondeu HTTP ${response.status}`);
       error.status = response.status;
       error.code = data?.error?.code || 'openai_request_failed';
+      error.openaiType = data?.error?.type || '';
       throw error;
     }
     return data;
@@ -47,6 +48,54 @@ async function createResponse(payload = {}) {
   } finally {
     clearTimeout(timeout);
   }
+}
+
+
+function isOpenAiCreditError(error = {}) {
+  const code = String(error?.code || error?.error?.code || '').toLowerCase();
+  const type = String(error?.openaiType || error?.type || error?.error?.type || '').toLowerCase();
+  const message = String(error?.message || error?.error?.message || '').toLowerCase();
+  return code === 'credit_balance_exhausted'
+    || code === 'insufficient_quota'
+    || type === 'insufficient_quota'
+    || message.includes('no credits remaining')
+    || message.includes('credit balance exhausted')
+    || message.includes('insufficient quota');
+}
+
+function isAdminProfile(profile = {}, identity = {}) {
+  return profile?.role === 'admin' || profile?.isAdmin === true || identity?.isAdmin === true;
+}
+
+function publicOpenAiError(error, { profile = {}, identity = {}, fallback = 'O Allofy não conseguiu responder agora. Tente novamente.' } = {}) {
+  if (isOpenAiCreditError(error)) {
+    const admin = isAdminProfile(profile, identity);
+    return {
+      status: 503,
+      code: 'ai_credits_exhausted',
+      error: admin
+        ? '⚠️ Saldo da IA esgotado. Adicione créditos à API da OpenAI para reativar o Allofy.'
+        : 'O Allofy está temporariamente indisponível. Tente novamente mais tarde.',
+      retryable: false,
+    };
+  }
+  if (error?.code === 'openai_not_configured') {
+    const admin = isAdminProfile(profile, identity);
+    return {
+      status: 503,
+      code: 'openai_not_configured',
+      error: admin
+        ? '⚠️ A API da OpenAI não está configurada no servidor. Verifique a OPENAI_API_KEY.'
+        : 'O Allofy está temporariamente indisponível. Tente novamente mais tarde.',
+      retryable: false,
+    };
+  }
+  return {
+    status: Number(error?.status) || 500,
+    code: error?.code || 'allofy_error',
+    error: fallback,
+    retryable: true,
+  };
 }
 
 function outputText(response) {
@@ -71,4 +120,4 @@ async function createStructuredResponse({ instructions, input, name, schema, max
   }
 }
 
-module.exports = { ALLOFY_MODEL, ALLOFY_REASONING_EFFORT, createResponse, createStructuredResponse, outputText, assertConfigured };
+module.exports = { ALLOFY_MODEL, ALLOFY_REASONING_EFFORT, createResponse, createStructuredResponse, outputText, assertConfigured, isOpenAiCreditError, isAdminProfile, publicOpenAiError };
