@@ -3,7 +3,7 @@ const { tools: readTools, executeAllofyTool } = require('../services/allofyTools
 const { actionTools, isActionTool, executeAllofyAction, normalizeSource } = require('../services/allofyActionService');
 const { INSTRUCTIONS } = require('./allofyController');
 const { clientTools, isClientTool, executeClientTool, sanitizeAppContext, compactAppContext } = require('../services/allofyClientTools');
-const { assertConfigured } = require('../config/openai');
+const { assertConfigured, isOpenAiCreditError, publicOpenAiError } = require('../config/openai');
 const logger = require('../utils/logger');
 const {
   policyForProfile, consumeVoiceTranscription, reserveLiveSession,
@@ -16,6 +16,31 @@ const TRANSCRIBE_URL = 'https://api.openai.com/v1/audio/transcriptions';
 const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
 const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe';
+
+
+function openAiHttpError(status, payload, fallback = 'Falha ao conectar à OpenAI') {
+  let data = payload;
+  if (typeof payload === 'string') {
+    try { data = JSON.parse(payload); } catch (_) { data = {}; }
+  }
+  const error = new Error(data?.error?.message || fallback || `OpenAI respondeu HTTP ${status}`);
+  error.status = Number(status) || 502;
+  error.code = data?.error?.code || 'openai_request_failed';
+  error.openaiType = data?.error?.type || '';
+  return error;
+}
+
+function publicRealtimeError(req, error, fallback, defaultCode) {
+  if (isOpenAiCreditError(error) || error?.code === 'openai_not_configured') {
+    return publicOpenAiError(error, { profile: req.userData || {}, identity: req.userIdentity || {}, fallback });
+  }
+  return {
+    status: error?.status >= 500 ? 502 : Number(error?.status) || 500,
+    code: error?.code || defaultCode,
+    error: fallback,
+    retryable: true,
+  };
+}
 
 function safetyIdentifier(uid) {
   return `allofy_${crypto.createHash('sha256').update(String(uid || 'unknown')).digest('hex').slice(0, 48)}`;
@@ -127,7 +152,9 @@ async function createRealtimeCall(req, res) {
     if (!response.ok) {
       await cancelLiveSession(req.userIdentity.uid, lease?.leaseId, `openai_${response.status}`);
       logger.warn(`Realtime OpenAI HTTP ${response.status}: ${answer.slice(0, 600)}`);
-      return res.status(response.status >= 500 ? 502 : response.status).json({ error: 'Não foi possível iniciar o modo ao vivo.', code: 'realtime_connect_failed' });
+      const upstreamError = openAiHttpError(response.status, answer, 'Não foi possível iniciar o modo ao vivo.');
+      const publicError = publicRealtimeError(req, upstreamError, 'Não foi possível iniciar o modo ao vivo.', 'realtime_connect_failed');
+      return res.status(publicError.status).json(publicError);
     }
     res.setHeader('Access-Control-Expose-Headers', 'X-Allofy-Live-Lease, X-Allofy-Live-Max-Seconds, X-Allofy-Live-Remaining-Seconds');
     res.setHeader('X-Allofy-Live-Lease', lease.leaseId);
@@ -137,11 +164,8 @@ async function createRealtimeCall(req, res) {
   } catch (error) {
     if (lease?.leaseId) await cancelLiveSession(req.userIdentity?.uid, lease.leaseId, 'connect_exception');
     logger.error(`Allofy realtime connect: ${error.message}`);
-    const status = error.status || (error.code === 'openai_not_configured' ? 503 : 500);
-    res.status(status).json({
-      error: error.code === 'openai_not_configured' ? 'A IA ainda não foi configurada no servidor.' : error.message || 'Não foi possível iniciar o modo ao vivo.',
-      code: error.code || 'realtime_error', usage: error.usage || null,
-    });
+    const publicError = publicRealtimeError(req, error, error.message || 'Não foi possível iniciar o modo ao vivo.', 'realtime_error');
+    res.status(publicError.status).json({ ...publicError, usage: error.usage || null });
   }
 }
 
@@ -169,7 +193,9 @@ async function createNativeRealtimeSecret(req, res) {
     if (!response.ok || !data.value) {
       await cancelLiveSession(req.userIdentity.uid, lease?.leaseId, `secret_${response.status}`);
       logger.warn(`Realtime secret HTTP ${response.status}: ${JSON.stringify(data).slice(0, 600)}`);
-      return res.status(response.status >= 500 ? 502 : response.status || 502).json({ error: 'Não foi possível iniciar a voz do widget.', code: 'realtime_secret_failed' });
+      const upstreamError = openAiHttpError(response.status || 502, data, 'Não foi possível iniciar a voz do widget.');
+      const publicError = publicRealtimeError(req, upstreamError, 'Não foi possível iniciar a voz do widget.', 'realtime_secret_failed');
+      return res.status(publicError.status).json(publicError);
     }
     return res.json({
       value: data.value,
@@ -184,8 +210,8 @@ async function createNativeRealtimeSecret(req, res) {
   } catch (error) {
     if (lease?.leaseId) await cancelLiveSession(req.userIdentity?.uid, lease.leaseId, 'secret_exception');
     logger.error(`Allofy native realtime secret: ${error.message}`);
-    const status = error.status || (error.code === 'openai_not_configured' ? 503 : 500);
-    return res.status(status).json({ error: error.message || 'Não foi possível iniciar a voz do widget.', code: error.code || 'realtime_secret_error', usage: error.usage || null });
+    const publicError = publicRealtimeError(req, error, error.message || 'Não foi possível iniciar a voz do widget.', 'realtime_secret_error');
+    return res.status(publicError.status).json({ ...publicError, usage: error.usage || null });
   }
 }
 
@@ -244,13 +270,17 @@ async function transcribeAllofyAudio(req, res) {
       });
     } finally { clearTimeout(timeout); }
     const data = await response.json().catch(() => ({}));
-    if (!response.ok) throw Object.assign(new Error(data?.error?.message || `Transcrição HTTP ${response.status}`), { status: response.status });
+    if (!response.ok) throw openAiHttpError(response.status, data, `Transcrição HTTP ${response.status}`);
     const transcript = String(data.text || '').trim();
     if (!transcript) return res.status(422).json({ error: 'Não consegui entender o áudio.' });
     return res.json({ text: transcript, model, usage });
   } catch (error) {
     logger.error(`Allofy transcribe: ${error.message}`);
-    const status = error.status === 429 ? 429 : error.code === 'openai_not_configured' ? 503 : 500;
+    if (isOpenAiCreditError(error) || error.code === 'openai_not_configured') {
+      const publicError = publicOpenAiError(error, { profile: req.userData || {}, identity: req.userIdentity || {}, fallback: 'Não foi possível transcrever o áudio agora.' });
+      return res.status(publicError.status).json({ ...publicError, usage: error.usage || null });
+    }
+    const status = error.status === 429 ? 429 : 500;
     return res.status(status).json({ error: status === 429 ? error.message : 'Não foi possível transcrever o áudio agora.', code: error.code || 'transcribe_error', usage: error.usage || null });
   }
 }

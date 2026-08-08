@@ -1,5 +1,5 @@
 const { getDb, admin } = require('../config/firebase');
-const { createResponse, outputText } = require('../config/openai');
+const { createResponse, outputText, publicOpenAiError, isOpenAiCreditError } = require('../config/openai');
 const { tools: readTools, executeAllofyTool, financialOverview } = require('../services/allofyTools');
 const { actionTools, isActionTool, executeAllofyAction, normalizeSource } = require('../services/allofyActionService');
 const logger = require('../utils/logger');
@@ -333,10 +333,13 @@ async function handleAllofyChat(req, res) {
     });
   } catch (error) {
     logger.error(`Allofy chat error: ${error.message}`);
-    const status = error.status === 429 ? 429 : error.status === 403 ? 403 : error.status === 400 ? 400 : error.code === 'openai_not_configured' ? 503 : 500;
-    res.status(status).json({
-      error: status === 503 ? 'O Allofy ainda não foi configurado no servidor.' :
-        status === 429 ? error.message : status === 400 ? error.message : 'O Allofy não conseguiu responder agora. Tente novamente.',
+    if (isOpenAiCreditError(error) || error.code === 'openai_not_configured') {
+      const publicError = publicOpenAiError(error, { profile: req.userData || {}, identity: req.userIdentity || {} });
+      return res.status(publicError.status).json({ ...publicError, usage: error.usage || null });
+    }
+    const status = error.status === 429 ? 429 : error.status === 403 ? 403 : error.status === 400 ? 400 : 500;
+    return res.status(status).json({
+      error: status === 429 ? error.message : status === 400 ? error.message : 'O Allofy não conseguiu responder agora. Tente novamente.',
       code: error.code || 'allofy_error',
       usage: error.usage || null,
     });
