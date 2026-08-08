@@ -25,7 +25,7 @@ function policyForProfile(profile = {}) {
       visionModel: process.env.OPENAI_VISION_MODEL || 'gpt-5.6',
       reasoningEffort: process.env.OPENAI_REASONING_EFFORT || 'max',
       transcribeModel: process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
-      liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1',
+      liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1-mini',
       features: { basicAi: true, quickVoice: true, imageVision: true, advancedActions: true, live: true, widgetLive: true },
     };
   }
@@ -42,7 +42,7 @@ function policyForProfile(profile = {}) {
       visionModel: process.env.OPENAI_VISION_MODEL || 'gpt-5.6',
       reasoningEffort: process.env.OPENAI_REASONING_EFFORT || 'max',
       transcribeModel: process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
-      liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1',
+      liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1-mini',
       features: { basicAi: true, quickVoice: true, imageVision: true, advancedActions: true, live: true, widgetLive: true },
     };
   }
