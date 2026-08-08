@@ -1,7 +1,7 @@
 const crypto = require('crypto');
 const { tools: readTools, executeAllofyTool } = require('../services/allofyTools');
 const { actionTools, isActionTool, executeAllofyAction, normalizeSource } = require('../services/allofyActionService');
-const { INSTRUCTIONS } = require('./allofyController');
+const { INSTRUCTIONS, runAllofy } = require('./allofyController');
 const { clientTools, isClientTool, executeClientTool, sanitizeAppContext, compactAppContext } = require('../services/allofyClientTools');
 const { assertConfigured, isOpenAiCreditError, publicOpenAiError } = require('../config/openai');
 const logger = require('../utils/logger');
@@ -13,9 +13,34 @@ const {
 const REALTIME_CALLS_URL = 'https://api.openai.com/v1/realtime/calls';
 const REALTIME_SECRETS_URL = 'https://api.openai.com/v1/realtime/client_secrets';
 const TRANSCRIBE_URL = 'https://api.openai.com/v1/audio/transcriptions';
-const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1';
+const REALTIME_MODEL = process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1-mini';
 const REALTIME_VOICE = process.env.OPENAI_REALTIME_VOICE || 'marin';
 const TRANSCRIBE_MODEL = process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe';
+const REALTIME_FAST_READ_TOOL_NAMES = new Set([
+  'get_financial_overview',
+  'search_transactions',
+  'get_accounts_and_cards',
+  'get_categories',
+  'get_planning',
+]);
+const REALTIME_FAST_ACTION_TOOL_NAMES = new Set([
+  'create_transaction',
+  'create_card_purchase',
+  'undo_allofy_action',
+]);
+const REALTIME_BRAIN_TOOL_NAME = 'delegate_to_allofy_brain';
+const REALTIME_BRAIN_TOOL = {
+  name: REALTIME_BRAIN_TOOL_NAME,
+  description: 'Encaminha um pedido complexo do modo ao vivo para o modelo principal do Allofy. Use quando houver análise financeira mais profunda, cálculo/comparação, várias leituras ou ações, lote de lançamentos, edição complexa, planejamento, ambiguidade que exija raciocínio ou quando a tarefa não for segura para resolver apenas com uma ferramenta simples. Reescreva em task o pedido COMPLETO e autocontido, resolvendo referências da conversa como “isso”, “esse cartão” e confirmações anteriores. O cérebro principal pode executar ações; depois não repita essas ações com outras ferramentas.',
+  parameters: {
+    type: 'object',
+    additionalProperties: false,
+    properties: {
+      task: { type: 'string', minLength: 1, maxLength: 4000 },
+    },
+    required: ['task'],
+  },
+};
 
 
 function openAiHttpError(status, payload, fallback = 'Falha ao conectar à OpenAI') {
@@ -47,7 +72,11 @@ function safetyIdentifier(uid) {
 }
 
 function realtimeTools({ native = false } = {}) {
-  const sourceTools = native ? [...readTools, ...actionTools] : [...readTools, ...actionTools, ...clientTools];
+  const fastReadTools = readTools.filter(tool => REALTIME_FAST_READ_TOOL_NAMES.has(tool.name));
+  const fastActionTools = actionTools.filter(tool => REALTIME_FAST_ACTION_TOOL_NAMES.has(tool.name));
+  const sourceTools = native
+    ? [...fastReadTools, ...fastActionTools, REALTIME_BRAIN_TOOL]
+    : [...fastReadTools, ...fastActionTools, ...clientTools, REALTIME_BRAIN_TOOL];
   return sourceTools.map(tool => ({
     type: 'function',
     name: tool.name,
@@ -88,7 +117,12 @@ MODO AO VIVO:
 - Depois de uma ação bem-sucedida, confirme em uma frase curta com valor, descrição e origem quando relevante.
 - Se a ferramenta devolver confirmation_required, explique exatamente o que será alterado e aguarde uma nova confirmação do usuário.
 - Aceite interrupções naturais: pare de falar e ouça quando o usuário interromper.
-- Nunca leia IDs técnicos, hashes ou tokens em voz alta.${clientMode}${screenContext}`;
+- Nunca leia IDs técnicos, hashes ou tokens em voz alta.
+- Esta sessão usa um modelo de voz otimizado para velocidade/custo. Resolva diretamente saudações, navegação, uma consulta simples e uma única ação simples usando as ferramentas normais.
+- Quando o pedido exigir análise financeira profunda, cálculo/comparação, duas ou mais ações, lote de lançamentos, planejamento, edição complexa, várias consultas encadeadas ou raciocínio cuidadoso, use delegate_to_allofy_brain.
+- Ao delegar, transforme o pedido em uma tarefa completa e autocontida em task, incluindo o contexto relevante da conversa e resolvendo pronomes como “isso”, “esse cartão” e “pode fazer”.
+- O cérebro principal pode consultar e alterar os dados do usuário. Depois de delegate_to_allofy_brain, NÃO repita as mesmas ações com ferramentas do Realtime. Apenas comunique o campo reply e aguarde o próximo pedido.
+- Se delegate_to_allofy_brain pedir confirmação, faça a pergunta ao usuário. Se ele confirmar, delegue novamente descrevendo a ação completa e informando explicitamente a confirmação.${clientMode}${screenContext}`;
 }
 
 function buildRealtimeSession({ native = false, userData = {}, appContext = null } = {}) {
@@ -222,7 +256,32 @@ async function executeRealtimeTool(req, res) {
   try {
     const uid = req.userIdentity.uid;
     let result;
-    if (isClientTool(name)) {
+    if (name === REALTIME_BRAIN_TOOL_NAME) {
+      const task = String(args.task || req.body?.userMessage || '').trim().slice(0, 4000);
+      if (!task) return res.status(400).json({ ok: false, error: 'Pedido complexo não informado.', code: 'allofy_brain_task_required' });
+      const delegated = await runAllofy(uid, req.userData || {}, task, [], {
+        source: req.userIdentity?.nativeVoice ? 'widget_live' : 'live',
+        appContext: sanitizeAppContext(req.body?.appContext),
+      });
+      const mutations = Array.isArray(delegated?.mutations) ? delegated.mutations : [];
+      const clientActions = Array.isArray(delegated?.clientActions) ? delegated.clientActions : [];
+      const refresh = [...new Set(mutations.flatMap(item => Array.isArray(item?.refresh) ? item.refresh : []))];
+      result = {
+        ok: true,
+        delegated: true,
+        reply: String(delegated?.reply || 'Concluí o processamento no Allofy.').slice(0, 14000),
+        incomplete: delegated?.incomplete === true,
+        mutated: mutations.length > 0,
+        action: mutations.length ? 'allofy_brain' : null,
+        actionId: mutations.length === 1 ? (mutations[0]?.actionId || null) : null,
+        undoable: mutations.length === 1 && mutations[0]?.undoable === true,
+        summary: mutations.length ? `${mutations.length} ação${mutations.length === 1 ? '' : 'ões'} processada${mutations.length === 1 ? '' : 's'} pelo cérebro principal do Allofy.` : null,
+        refresh,
+        mutations,
+        clientAction: clientActions[0] || null,
+        clientActions,
+      };
+    } else if (isClientTool(name)) {
       result = executeClientTool(name, args, { appContext: sanitizeAppContext(req.body?.appContext) });
     } else if (isActionTool(name)) {
       result = await executeAllofyAction(name, args, uid, {
@@ -237,6 +296,14 @@ async function executeRealtimeTool(req, res) {
     return res.json(result);
   } catch (error) {
     logger.warn(`Allofy realtime tool ${name}: ${error.message}`);
+    if (isOpenAiCreditError(error) || error?.code === 'openai_not_configured') {
+      const publicError = publicOpenAiError(error, {
+        profile: req.userData || {},
+        identity: req.userIdentity || {},
+        fallback: 'Não foi possível executar essa ação no Allofy.',
+      });
+      return res.status(publicError.status).json({ ok: false, ...publicError });
+    }
     return res.status(500).json({ ok: false, error: 'Não foi possível executar essa ação no Allofy.', code: 'allofy_tool_failed' });
   }
 }
@@ -293,5 +360,6 @@ module.exports = {
   realtimeTools,
   buildRealtimeSession,
   REALTIME_MODEL,
+  REALTIME_BRAIN_TOOL_NAME,
   handleFinishLive,
 };
