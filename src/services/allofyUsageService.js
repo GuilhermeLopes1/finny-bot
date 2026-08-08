@@ -18,13 +18,15 @@ function policyForProfile(profile = {}) {
       label: 'Admin',
       commandLimit: null,
       voiceCommandLimit: null,
+      imageLimit: null,
       liveSecondsLimit: null,
       liveSessionMaxSeconds: positiveInt(process.env.ALLOFY_LIVE_SESSION_MAX_MINUTES, 10) * 60,
       agentModel: process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6',
+      visionModel: process.env.OPENAI_VISION_MODEL || 'gpt-5.6',
       reasoningEffort: process.env.OPENAI_REASONING_EFFORT || 'max',
       transcribeModel: process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
       liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1',
-      features: { basicAi: true, quickVoice: true, advancedActions: true, live: true, widgetLive: true },
+      features: { basicAi: true, quickVoice: true, imageVision: true, advancedActions: true, live: true, widgetLive: true },
     };
   }
   if (isPro) {
@@ -33,13 +35,15 @@ function policyForProfile(profile = {}) {
       label: 'Pro',
       commandLimit: positiveInt(process.env.ALLOFY_PRO_COMMANDS_MONTHLY, 150),
       voiceCommandLimit: positiveInt(process.env.ALLOFY_PRO_VOICE_COMMANDS_MONTHLY, 150),
+      imageLimit: positiveInt(process.env.ALLOFY_PRO_IMAGES_MONTHLY, 40),
       liveSecondsLimit: positiveInt(process.env.ALLOFY_PRO_LIVE_MINUTES_MONTHLY, 25) * 60,
       liveSessionMaxSeconds: positiveInt(process.env.ALLOFY_LIVE_SESSION_MAX_MINUTES, 10) * 60,
       agentModel: process.env.OPENAI_AGENT_MODEL || process.env.OPENAI_MODEL || 'gpt-5.6',
+      visionModel: process.env.OPENAI_VISION_MODEL || 'gpt-5.6',
       reasoningEffort: process.env.OPENAI_REASONING_EFFORT || 'max',
       transcribeModel: process.env.OPENAI_TRANSCRIBE_MODEL || 'gpt-4o-transcribe',
       liveModel: process.env.OPENAI_REALTIME_MODEL || 'gpt-realtime-2.1',
-      features: { basicAi: true, quickVoice: true, advancedActions: true, live: true, widgetLive: true },
+      features: { basicAi: true, quickVoice: true, imageVision: true, advancedActions: true, live: true, widgetLive: true },
     };
   }
   return {
@@ -47,13 +51,15 @@ function policyForProfile(profile = {}) {
     label: 'Grátis',
     commandLimit: positiveInt(process.env.ALLOFY_FREE_COMMANDS_MONTHLY, 20),
     voiceCommandLimit: positiveInt(process.env.ALLOFY_FREE_VOICE_COMMANDS_MONTHLY, 5),
+    imageLimit: positiveInt(process.env.ALLOFY_FREE_IMAGES_MONTHLY, 2),
     liveSecondsLimit: 0,
     liveSessionMaxSeconds: 0,
     agentModel: process.env.OPENAI_FREE_AGENT_MODEL || 'gpt-5.6-luna',
+    visionModel: process.env.OPENAI_FREE_VISION_MODEL || process.env.OPENAI_VISION_MODEL || 'gpt-5.6',
     reasoningEffort: process.env.OPENAI_FREE_REASONING_EFFORT || 'low',
     transcribeModel: process.env.OPENAI_FREE_TRANSCRIBE_MODEL || 'gpt-4o-mini-transcribe',
     liveModel: null,
-    features: { basicAi: true, quickVoice: true, advancedActions: false, live: false, widgetLive: false },
+    features: { basicAi: true, quickVoice: true, imageVision: true, advancedActions: false, live: false, widgetLive: false },
   };
 }
 
@@ -85,6 +91,7 @@ function remaining(limit, used) {
 function snapshotFromData(policy, data = {}, month = monthKey()) {
   const commands = toCounter(data.commands);
   const voiceCommands = toCounter(data.voiceCommands);
+  const images = toCounter(data.images);
   const liveSeconds = toCounter(data.liveChargedSeconds);
   return {
     month,
@@ -93,6 +100,7 @@ function snapshotFromData(policy, data = {}, month = monthKey()) {
     resetAt: resetAtIso(month),
     commands: { used: commands, limit: policy.commandLimit, remaining: remaining(policy.commandLimit, commands) },
     quickVoice: { used: voiceCommands, limit: policy.voiceCommandLimit, remaining: remaining(policy.voiceCommandLimit, voiceCommands) },
+    images: { used: images, limit: policy.imageLimit, remaining: remaining(policy.imageLimit, images) },
     live: {
       usedSeconds: liveSeconds,
       usedMinutes: Number((liveSeconds / 60).toFixed(1)),
@@ -105,6 +113,7 @@ function snapshotFromData(policy, data = {}, month = monthKey()) {
     features: policy.features,
     models: {
       agent: policy.agentModel,
+      vision: policy.visionModel,
       quickVoice: policy.transcribeModel,
       live: policy.liveModel,
     },
@@ -192,32 +201,51 @@ async function maybeSendUsageNotification(uid, profile, kind, snapshot) {
   }
 }
 
-async function consumeCommand(uid, profile = {}) {
+async function consumeChatRequest(uid, profile = {}, options = {}) {
   const policy = policyForProfile(profile);
-  if (policy.commandLimit === null) return getUsageSnapshot(uid, profile);
+  const withImage = options.withImage === true;
+  if (policy.commandLimit === null && (!withImage || policy.imageLimit === null)) return getUsageSnapshot(uid, profile);
   const month = monthKey();
   const ref = usageRef(uid, month);
   let result;
   await getDb().runTransaction(async tx => {
     const snap = await tx.get(ref);
     const data = snap.data() || {};
-    const used = toCounter(data.commands);
-    if (used >= policy.commandLimit) {
-      result = { allowed: false, data };
+    const usedCommands = toCounter(data.commands);
+    const usedImages = toCounter(data.images);
+    if (policy.commandLimit !== null && usedCommands >= policy.commandLimit) {
+      result = { allowed: false, code: 'monthly_command_limit', data };
       return;
     }
-    const next = used + 1;
-    tx.set(ref, {
+    if (withImage && policy.imageLimit !== null && usedImages >= policy.imageLimit) {
+      result = { allowed: false, code: 'monthly_image_limit', data };
+      return;
+    }
+    const next = {
       uid, month, tierAtLastUse: policy.tier,
-      commands: next,
+      commands: policy.commandLimit === null ? usedCommands : usedCommands + 1,
       updatedAt: admin.firestore.FieldValue.serverTimestamp(),
-    }, { merge: true });
-    result = { allowed: true, data: { ...data, commands: next } };
+    };
+    if (withImage) next.images = policy.imageLimit === null ? usedImages : usedImages + 1;
+    tx.set(ref, next, { merge: true });
+    result = {
+      allowed: true,
+      data: { ...data, commands: next.commands, images: withImage ? next.images : usedImages },
+    };
   });
-  const snapshot = snapshotFromData(policy, result.data, month);
-  if (!result.allowed) throw quotaError('monthly_command_limit', 'Você atingiu o limite mensal de comandos do Allofy.', snapshot);
+  const snapshot = snapshotFromData(policy, result.data || {}, month);
+  if (!result.allowed) {
+    if (result.code === 'monthly_image_limit') {
+      throw quotaError('monthly_image_limit', 'Você atingiu o limite mensal de imagens do Allofy.', snapshot);
+    }
+    throw quotaError('monthly_command_limit', 'Você atingiu o limite mensal de comandos do Allofy.', snapshot);
+  }
   setImmediate(() => maybeSendUsageNotification(uid, profile, 'commands', snapshot));
   return snapshot;
+}
+
+async function consumeCommand(uid, profile = {}) {
+  return consumeChatRequest(uid, profile, { withImage: false });
 }
 
 async function consumeVoiceTranscription(uid, profile = {}) {
@@ -386,6 +414,7 @@ module.exports = {
   TIER,
   policyForProfile,
   getUsageSnapshot,
+  consumeChatRequest,
   consumeCommand,
   consumeVoiceTranscription,
   reserveLiveSession,

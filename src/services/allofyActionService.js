@@ -267,7 +267,7 @@ function normalizeEntityCollection(entity) {
 }
 
 function normalizeSource(source) {
-  return ['text', 'voice', 'live', 'widget', 'widget_live'].includes(String(source)) ? String(source) : 'text';
+  return ['text', 'image', 'voice', 'live', 'widget', 'widget_live'].includes(String(source)) ? String(source) : 'text';
 }
 
 async function performAction({ uid, action, requestId, source, refs, compute }) {
@@ -328,6 +328,8 @@ function docDataWithOrder(data) { return { ...data, _v39Order: Date.now() }; }
 
 async function createTransaction(uid, args, context) {
   const profile = await freshProfile(uid);
+  const imageFingerprint = text(context?.imageImport?.fingerprint, 80);
+  const imageImportRef = imageFingerprint ? itemRef(uid, 'allofy_image_imports', imageFingerprint) : null;
   const type = args.type === 'income' ? 'income' : 'expense';
   const amount = money(args.amount);
   if (!(amount > 0)) return resultError('invalid_amount', 'Informe um valor maior que zero.');
@@ -347,14 +349,20 @@ async function createTransaction(uid, args, context) {
     category: category?.id || text(args.category, 100) || '',
     bankId: bank?.id || null, cardId: null, benefitId: null, coveredByBenefit: false,
     status, recurrence, notes: text(args.notes, 500), source: 'allofy', allofyCreated: true,
+    allofyImageFingerprint: imageFingerprint || null,
     createdAt, updatedAt: createdAt,
   });
   const refs = [itemRef(uid, 'transactions', id)];
   if (bank) refs.push(itemRef(uid, 'banks', bank.id));
+  if (imageImportRef) refs.push(imageImportRef);
   return performAction({
     uid, action: 'create_transaction', requestId: context.requestId, source: context.source, refs,
     compute: byPath => {
+      if (imageImportRef && byPath.get(imageImportRef.path)?.exists) {
+        return resultError('duplicate_image_item', 'Este lançamento desta imagem já foi registrado. Não vou duplicá-lo.');
+      }
       const writes = [{ type: 'set', ref: itemRef(uid, 'transactions', id), data: txData }];
+      if (imageImportRef) writes.push({ type: 'set', ref: imageImportRef, data: { fingerprint: imageFingerprint, kind: 'transaction', targetId: id, createdAt: createdAt } });
       if (bank && status === 'paid') {
         const bankRef = itemRef(uid, 'banks', bank.id);
         const bankSnap = byPath.get(bankRef.path);
@@ -373,6 +381,8 @@ async function createTransaction(uid, args, context) {
 
 async function createCardPurchase(uid, args, context) {
   const profile = await freshProfile(uid);
+  const imageFingerprint = text(context?.imageImport?.fingerprint, 80);
+  const imageImportRef = imageFingerprint ? itemRef(uid, 'allofy_image_imports', imageFingerprint) : null;
   const cardResult = resolveCard(profile, args.card, true); if (!cardResult.ok) return cardResult;
   const categoryResult = resolveCategory(profile, args.category, 'expense', args.description); if (!categoryResult.ok && args.category) return categoryResult;
   const card = cardResult.item;
@@ -392,13 +402,121 @@ async function createCardPurchase(uid, args, context) {
     valorParcela: installmentAmount, valorFinal: finalAmount, jurosTotal: interestTotal,
     temJuros: interestTotal > 0, categoria: category?.name || text(args.category, 100) || '',
     dataCompra: validDate(args.date) ? args.date : todaySaoPaulo(), obs: text(args.notes, 500),
-    tipo: 'credito', source: 'allofy', allofyCreated: true, createdAt: created, updatedAt: created,
+    tipo: 'credito', source: 'allofy', allofyCreated: true, allofyImageFingerprint: imageFingerprint || null,
+    createdAt: created, updatedAt: created,
   });
   const ref = itemRef(uid, 'cardTransactions', id);
+  const refs = imageImportRef ? [ref, imageImportRef] : [ref];
   return performAction({
-    uid, action: 'create_card_purchase', requestId: context.requestId, source: context.source, refs: [ref],
-    compute: () => ({ ok: true, writes: [{ type: 'set', ref, data }], result: mutationResult('create_card_purchase', null, `Compra de R$ ${amount.toFixed(2).replace('.', ',')} registrada no cartão ${cardLabel(card)}.`, { entity: { kind: 'card_purchase', id }, refresh: ['cardTransactions', 'cards'] }) }),
+    uid, action: 'create_card_purchase', requestId: context.requestId, source: context.source, refs,
+    compute: byPath => {
+      if (imageImportRef && byPath.get(imageImportRef.path)?.exists) {
+        return resultError('duplicate_image_item', 'Esta compra desta imagem já foi registrada. Não vou duplicá-la.');
+      }
+      const writes = [{ type: 'set', ref, data }];
+      if (imageImportRef) writes.push({ type: 'set', ref: imageImportRef, data: { fingerprint: imageFingerprint, kind: 'card_purchase', targetId: id, createdAt: created } });
+      return { ok: true, writes, result: mutationResult('create_card_purchase', null, `Compra de R$ ${amount.toFixed(2).replace('.', ',')} registrada no cartão ${cardLabel(card)}.`, { entity: { kind: 'card_purchase', id }, refresh: ['cardTransactions', 'cards'] }) };
+    },
   });
+}
+
+
+function imageBatchFingerprint(imageContext, index) {
+  if (!imageContext?.imageHash || !Number.isInteger(index) || index < 0) return null;
+  return crypto.createHash('sha256').update(`${imageContext.imageHash}:${index}`).digest('hex');
+}
+
+async function importImageFinancialItems(uid, args, context = {}) {
+  if (args.confirmed !== true) {
+    return resultError('confirmation_required', 'Confirme explicitamente antes de importar todos os lançamentos da imagem.');
+  }
+  const imageContext = context.imageBatchContext;
+  const items = Array.isArray(imageContext?.items)
+    ? imageContext.items.filter(item => Number(item?.amount) > 0 && ['card_purchase', 'expense', 'income'].includes(item?.kind))
+    : [];
+  if (!imageContext?.imageHash || !items.length) {
+    return resultError('image_context_missing', 'Não encontrei um lote financeiro recente da imagem. Envie a imagem novamente.');
+  }
+
+  const profile = await freshProfile(uid);
+  const hasCardPurchases = items.some(item => item.kind === 'card_purchase');
+  let card = null;
+  if (hasCardPurchases) {
+    const cardQuery = text(args.card, 120) || text(imageContext.cardHint, 120);
+    const cardResult = resolveCard(profile, cardQuery, true);
+    if (!cardResult.ok) return cardResult;
+    card = cardResult.item;
+  }
+
+  let bank = null;
+  const bankQuery = text(args.account, 120) || text(imageContext.accountHint, 120);
+  if (bankQuery) {
+    const bankResult = resolveBank(profile, bankQuery, false);
+    if (!bankResult.ok) return bankResult;
+    bank = bankResult.item;
+  }
+
+  const imported = [];
+  const duplicates = [];
+  const failed = [];
+  for (const item of items.slice(0, 50)) {
+    const index = Number.isInteger(item.index) ? item.index : items.indexOf(item);
+    const fingerprint = imageBatchFingerprint(imageContext, index);
+    const childContext = {
+      ...context,
+      source: 'image',
+      requestId: `${text(context.requestId, 220) || 'image_import'}_${index}`,
+      imageImport: fingerprint ? { index, fingerprint } : null,
+      imageBatchContext: null,
+    };
+    let result;
+    if (item.kind === 'card_purchase') {
+      result = await createCardPurchase(uid, {
+        description: text(item.description, 160) || `Compra da imagem ${index + 1}`,
+        amount: money(item.amount),
+        card: card?.id || cardLabel(card),
+        installments: Math.max(1, Math.min(60, Number(item.installments || 1) | 0)),
+        installmentAmount: item.installmentAmount == null ? null : money(item.installmentAmount),
+        date: validDate(item.date) ? item.date : null,
+        category: text(item.category, 100) || null,
+        notes: text(item.notes, 500) || 'Importado de imagem pelo Allofy',
+      }, childContext);
+    } else {
+      result = await createTransaction(uid, {
+        description: text(item.description, 160) || `Lançamento da imagem ${index + 1}`,
+        amount: money(item.amount),
+        type: item.kind === 'income' ? 'income' : 'expense',
+        date: validDate(item.date) ? item.date : null,
+        category: text(item.category, 100) || null,
+        account: bank?.id || null,
+        status: ['paid', 'pending'].includes(item.status) ? item.status : 'paid',
+        recurrence: 'variable',
+        notes: text(item.notes, 500) || 'Importado de imagem pelo Allofy',
+      }, childContext);
+    }
+
+    if (result?.mutated) imported.push({ index, summary: result.summary, actionId: result.actionId });
+    else if (result?.code === 'duplicate_image_item') duplicates.push({ index, description: item.description });
+    else failed.push({ index, description: item.description, code: result?.code || 'import_failed', error: result?.error || 'Não foi possível importar.' });
+  }
+
+  const parts = [];
+  if (imported.length) parts.push(`${imported.length} lançamento${imported.length === 1 ? '' : 's'} importado${imported.length === 1 ? '' : 's'}`);
+  if (duplicates.length) parts.push(`${duplicates.length} duplicado${duplicates.length === 1 ? '' : 's'} ignorado${duplicates.length === 1 ? '' : 's'}`);
+  if (failed.length) parts.push(`${failed.length} não importado${failed.length === 1 ? '' : 's'}`);
+  return {
+    ok: failed.length === 0 || imported.length > 0 || duplicates.length > 0,
+    mutated: imported.length > 0,
+    action: 'import_image_financial_items',
+    actionId: null,
+    undoable: false,
+    summary: parts.join(' · ') || 'Nenhum lançamento foi importado.',
+    refresh: imported.length ? ['transactions', 'cardTransactions', 'cards', 'banks'] : [],
+    importedCount: imported.length,
+    duplicateCount: duplicates.length,
+    failedCount: failed.length,
+    failed: failed.slice(0, 12),
+  };
 }
 
 async function recordTransfer(uid, args, context) {
@@ -914,6 +1032,7 @@ const nullableString = { type: ['string', 'null'] };
 const actionTools = [
   { type: 'function', name: 'create_transaction', description: 'Cria uma receita ou despesa no Allofy. Se status=paid e houver conta, atualiza o saldo cadastrado da conta. Use para comandos como “gastei 35 no almoço” ou “recebi 2.000 de salário”. Não use para compra no cartão.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { description: { type: 'string', minLength: 1, maxLength: 160 }, amount: { type: 'number', exclusiveMinimum: 0 }, type: { type: 'string', enum: ['expense', 'income'] }, date: nullableString, category: nullableString, account: nullableString, status: { type: 'string', enum: ['paid', 'pending'] }, recurrence: { type: 'string', enum: ['fixed', 'variable', 'installment'] }, notes: nullableString }, required: ['description', 'amount', 'type', 'date', 'category', 'account', 'status', 'recurrence', 'notes'] } },
   { type: 'function', name: 'create_card_purchase', description: 'Registra uma compra no cartão de crédito no Allofy, inclusive parcelamento. Não movimenta saldo bancário.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { description: { type: 'string', minLength: 1, maxLength: 160 }, amount: { type: 'number', exclusiveMinimum: 0 }, card: { type: 'string', minLength: 1, maxLength: 120 }, installments: { type: 'integer', minimum: 1, maximum: 60 }, installmentAmount: { type: ['number', 'null'], minimum: 0 }, date: nullableString, category: nullableString, notes: nullableString }, required: ['description', 'amount', 'card', 'installments', 'installmentAmount', 'date', 'category', 'notes'] } },
+  { type: 'function', name: 'import_image_financial_items', description: 'Importa em lote todos os lançamentos financeiros do contexto de imagem já analisado pelo servidor. Use SOMENTE depois de o usuário confirmar explicitamente a importação. Não envie os itens novamente: informe apenas cartão/conta quando necessário.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { card: nullableString, account: nullableString, confirmed: { type: 'boolean' } }, required: ['card', 'account', 'confirmed'] } },
   { type: 'function', name: 'record_transfer', description: 'REGISTRA no Allofy uma transferência entre duas contas cadastradas e ajusta os saldos do app. Não envia dinheiro nem acessa banco real.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { fromAccount: { type: 'string' }, toAccount: { type: 'string' }, amount: { type: 'number', exclusiveMinimum: 0 }, date: nullableString, description: nullableString }, required: ['fromAccount', 'toAccount', 'amount', 'date', 'description'] } },
   { type: 'function', name: 'create_goal', description: 'Cria uma meta financeira no Allofy.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' }, target: { type: 'number', exclusiveMinimum: 0 }, current: { type: 'number', minimum: 0 }, monthlyContribution: { type: 'number', minimum: 0 }, deadline: nullableString, description: nullableString, icon: nullableString, color: nullableString }, required: ['name', 'target', 'current', 'monthlyContribution', 'deadline', 'description', 'icon', 'color'] } },
   { type: 'function', name: 'add_goal_progress', description: 'Adiciona progresso a uma meta já cadastrada. Altera somente o acompanhamento da meta; não debita conta bancária automaticamente.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { goal: { type: 'string' }, amount: { type: 'number', exclusiveMinimum: 0 }, note: nullableString }, required: ['goal', 'amount', 'note'] } },
@@ -938,6 +1057,7 @@ function isActionTool(name) { return ACTION_NAMES.has(name); }
 async function executeAllofyAction(name, args, uid, context = {}) {
   if (name === 'create_transaction') return createTransaction(uid, args, context);
   if (name === 'create_card_purchase') return createCardPurchase(uid, args, context);
+  if (name === 'import_image_financial_items') return importImageFinancialItems(uid, args, context);
   if (name === 'record_transfer') return recordTransfer(uid, args, context);
   if (name === 'create_goal') return createGoal(uid, args, context);
   if (name === 'add_goal_progress') return addGoalProgress(uid, args, context);
