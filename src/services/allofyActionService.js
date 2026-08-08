@@ -421,6 +421,118 @@ async function createCardPurchase(uid, args, context) {
 }
 
 
+async function applyCardStatementBatch(uid, args, context = {}) {
+  if (args.confirmed !== true) {
+    return resultError('confirmation_required', 'Confirme explicitamente antes de aplicar vários lançamentos ou alterar dados do cartão.');
+  }
+  const profile = await freshProfile(uid);
+  const cardResult = resolveCard(profile, args.card, true);
+  if (!cardResult.ok) return cardResult;
+  const card = cardResult.item;
+  const rawItems = Array.isArray(args.items) ? args.items.slice(0, 60) : [];
+  if (!rawItems.length && args.limit == null && args.dueDay == null && args.closingDay == null) {
+    return resultError('items_required', 'Informe ao menos um lançamento ou uma alteração do cartão.');
+  }
+
+  const cardRef = itemRef(uid, 'cards', card.id);
+  const at = Date.now();
+  const refs = [cardRef];
+  const writes = [];
+  let purchaseCount = 0;
+  let creditCount = 0;
+  let purchaseTotal = 0;
+  let creditTotal = 0;
+  const paymentAdds = {};
+
+  for (let index = 0; index < rawItems.length; index += 1) {
+    const entry = rawItems[index] || {};
+    const description = text(entry.description, 160);
+    const amount = Math.abs(money(entry.amount));
+    const kind = entry.kind === 'credit' ? 'credit' : 'purchase';
+    if (!description || !(amount > 0)) {
+      return resultError('invalid_batch_item', `O lançamento ${index + 1} precisa de descrição e valor maior que zero.`);
+    }
+    const date = validDate(entry.date) ? entry.date : todaySaoPaulo();
+
+    if (kind === 'credit') {
+      const invoiceMonth = /^\d{4}-\d{2}$/.test(String(entry.invoiceMonth || ''))
+        ? String(entry.invoiceMonth)
+        : date.slice(0, 7);
+      paymentAdds[invoiceMonth] = money((paymentAdds[invoiceMonth] || 0) + amount);
+      creditCount += 1;
+      creditTotal = money(creditTotal + amount);
+      continue;
+    }
+
+    const installments = Math.max(1, Math.min(60, Number(entry.installments || 1) | 0));
+    const categoryResult = resolveCategory(profile, entry.category, 'expense', description);
+    if (!categoryResult.ok && entry.category) return categoryResult;
+    const category = categoryResult.item;
+    const installmentAmount = money(amount / installments);
+    const id = newId('cardbatch_ai');
+    const docRef = itemRef(uid, 'cardTransactions', id);
+    refs.push(docRef);
+    writes.push({
+      type: 'set', ref: docRef, data: docDataWithOrder({
+        id, cardId: card.id, descricao: description, valorTotal: amount, parcelas: installments,
+        valorParcela: installmentAmount, valorFinal: amount, jurosTotal: 0, temJuros: false,
+        categoria: category?.name || text(entry.category, 100) || '', category: category?.id || text(entry.category, 100) || '',
+        dataCompra: date, obs: text(entry.notes, 500), tipo: 'credito', source: 'allofy_batch', allofyCreated: true,
+        createdAt: at + index, updatedAt: at + index,
+      })
+    });
+    purchaseCount += 1;
+    purchaseTotal = money(purchaseTotal + amount);
+  }
+
+  const cardPatch = { updatedAt: nowIso() };
+  if (args.limit != null) cardPatch.limit = Math.max(0, money(args.limit));
+  if (args.dueDay != null) cardPatch.due = Math.max(1, Math.min(31, Number(args.dueDay) | 0));
+  if (args.closingDay != null) cardPatch.closing = Math.max(1, Math.min(31, Number(args.closingDay) | 0));
+
+  return performAction({
+    uid, action: 'apply_card_statement_batch', requestId: context.requestId, source: context.source, refs,
+    compute: byPath => {
+      const currentSnap = byPath.get(cardRef.path);
+      if (!currentSnap?.exists) return resultError('card_not_found', 'O cartão deixou de existir.');
+      const current = currentSnap.data() || {};
+      if (Object.keys(paymentAdds).length) {
+        const invoicePayments = current.invoicePayments && typeof current.invoicePayments === 'object'
+          ? cloneData(current.invoicePayments)
+          : {};
+        for (const [month, value] of Object.entries(paymentAdds)) {
+          const previous = invoicePayments[month] && typeof invoicePayments[month] === 'object' ? invoicePayments[month] : {};
+          const paid = money(Math.max(0, money(previous.paid)) + value);
+          invoicePayments[month] = {
+            ...previous, paid, type: previous.type || 'statement_credit',
+            updatedAt: nowIso(), source: 'allofy_batch',
+          };
+        }
+        cardPatch.invoicePayments = invoicePayments;
+      }
+      const plannedWrites = [...writes, { type: 'set', ref: cardRef, merge: true, data: cardPatch }];
+      const parts = [];
+      if (purchaseCount) parts.push(`${purchaseCount} compra${purchaseCount === 1 ? '' : 's'} (R$ ${purchaseTotal.toFixed(2).replace('.', ',')})`);
+      if (creditCount) parts.push(`${creditCount} crédito${creditCount === 1 ? '' : 's'} de fatura (R$ ${creditTotal.toFixed(2).replace('.', ',')})`);
+      const changed = [];
+      if (args.limit != null) changed.push(`limite R$ ${money(args.limit).toFixed(2).replace('.', ',')}`);
+      if (args.dueDay != null) changed.push(`vencimento dia ${cardPatch.due}`);
+      if (args.closingDay != null) changed.push(`fechamento dia ${cardPatch.closing}`);
+      const summary = `Cartão ${cardLabel(card)} atualizado: ${[...parts, ...changed].join(' · ') || 'dados atualizados'}.`;
+      return {
+        ok: true,
+        writes: plannedWrites,
+        result: mutationResult('apply_card_statement_batch', null, summary, {
+          entity: { kind: 'card', id: card.id },
+          refresh: ['cardTransactions', 'cards'],
+          details: { purchaseCount, creditCount, purchaseTotal, creditTotal },
+        })
+      };
+    },
+  });
+}
+
+
 function imageBatchFingerprint(imageContext, index) {
   if (!imageContext?.imageHash || !Number.isInteger(index) || index < 0) return null;
   return crypto.createHash('sha256').update(`${imageContext.imageHash}:${index}`).digest('hex');
@@ -1032,6 +1144,7 @@ const nullableString = { type: ['string', 'null'] };
 const actionTools = [
   { type: 'function', name: 'create_transaction', description: 'Cria uma receita ou despesa no Allofy. Se status=paid e houver conta, atualiza o saldo cadastrado da conta. Use para comandos como “gastei 35 no almoço” ou “recebi 2.000 de salário”. Não use para compra no cartão.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { description: { type: 'string', minLength: 1, maxLength: 160 }, amount: { type: 'number', exclusiveMinimum: 0 }, type: { type: 'string', enum: ['expense', 'income'] }, date: nullableString, category: nullableString, account: nullableString, status: { type: 'string', enum: ['paid', 'pending'] }, recurrence: { type: 'string', enum: ['fixed', 'variable', 'installment'] }, notes: nullableString }, required: ['description', 'amount', 'type', 'date', 'category', 'account', 'status', 'recurrence', 'notes'] } },
   { type: 'function', name: 'create_card_purchase', description: 'Registra uma compra no cartão de crédito no Allofy, inclusive parcelamento. Não movimenta saldo bancário.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { description: { type: 'string', minLength: 1, maxLength: 160 }, amount: { type: 'number', exclusiveMinimum: 0 }, card: { type: 'string', minLength: 1, maxLength: 120 }, installments: { type: 'integer', minimum: 1, maximum: 60 }, installmentAmount: { type: ['number', 'null'], minimum: 0 }, date: nullableString, category: nullableString, notes: nullableString }, required: ['description', 'amount', 'card', 'installments', 'installmentAmount', 'date', 'category', 'notes'] } },
+  { type: 'function', name: 'apply_card_statement_batch', description: 'Aplica em UMA única ação vários lançamentos informados pelo usuário para um mesmo cartão e, opcionalmente, atualiza limite, vencimento e fechamento. Use para listas/CSV de fatura ou quando o usuário pedir várias compras de uma vez. kind=purchase cria compra; kind=credit registra crédito/pagamento recebido na fatura do mês indicado. Evite chamar create_card_purchase repetidamente quando esta ferramenta resolver o pedido em lote.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { card: { type: 'string', minLength: 1, maxLength: 120 }, items: { type: 'array', maxItems: 60, items: { type: 'object', additionalProperties: false, properties: { description: { type: 'string', minLength: 1, maxLength: 160 }, amount: { type: 'number', exclusiveMinimum: 0 }, kind: { type: 'string', enum: ['purchase','credit'] }, date: nullableString, invoiceMonth: nullableString, category: nullableString, installments: { type: 'integer', minimum: 1, maximum: 60 }, notes: nullableString }, required: ['description','amount','kind','date','invoiceMonth','category','installments','notes'] } }, limit: { type: ['number','null'], minimum: 0 }, dueDay: { type: ['integer','null'], minimum: 1, maximum: 31 }, closingDay: { type: ['integer','null'], minimum: 1, maximum: 31 }, confirmed: { type: 'boolean' } }, required: ['card','items','limit','dueDay','closingDay','confirmed'] } },
   { type: 'function', name: 'import_image_financial_items', description: 'Importa em lote todos os lançamentos financeiros do contexto de imagem já analisado pelo servidor. Use SOMENTE depois de o usuário confirmar explicitamente a importação. Não envie os itens novamente: informe apenas cartão/conta quando necessário.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { card: nullableString, account: nullableString, confirmed: { type: 'boolean' } }, required: ['card', 'account', 'confirmed'] } },
   { type: 'function', name: 'record_transfer', description: 'REGISTRA no Allofy uma transferência entre duas contas cadastradas e ajusta os saldos do app. Não envia dinheiro nem acessa banco real.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { fromAccount: { type: 'string' }, toAccount: { type: 'string' }, amount: { type: 'number', exclusiveMinimum: 0 }, date: nullableString, description: nullableString }, required: ['fromAccount', 'toAccount', 'amount', 'date', 'description'] } },
   { type: 'function', name: 'create_goal', description: 'Cria uma meta financeira no Allofy.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' }, target: { type: 'number', exclusiveMinimum: 0 }, current: { type: 'number', minimum: 0 }, monthlyContribution: { type: 'number', minimum: 0 }, deadline: nullableString, description: nullableString, icon: nullableString, color: nullableString }, required: ['name', 'target', 'current', 'monthlyContribution', 'deadline', 'description', 'icon', 'color'] } },
@@ -1057,6 +1170,7 @@ function isActionTool(name) { return ACTION_NAMES.has(name); }
 async function executeAllofyAction(name, args, uid, context = {}) {
   if (name === 'create_transaction') return createTransaction(uid, args, context);
   if (name === 'create_card_purchase') return createCardPurchase(uid, args, context);
+  if (name === 'apply_card_statement_batch') return applyCardStatementBatch(uid, args, context);
   if (name === 'import_image_financial_items') return importImageFinancialItems(uid, args, context);
   if (name === 'record_transfer') return recordTransfer(uid, args, context);
   if (name === 'create_goal') return createGoal(uid, args, context);
