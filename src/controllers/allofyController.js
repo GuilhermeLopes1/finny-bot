@@ -52,9 +52,14 @@ REGRAS DE DADOS — OBRIGATÓRIAS:
 - Quando houver duas contas/cartões/categorias compatíveis ou faltar um dado indispensável, NÃO escolha arbitrariamente: use o erro/choices da ferramenta e faça uma pergunta curta.
 - Em criação de transação, status padrão é paid quando o usuário descreve algo que já aconteceu; use pending quando ele disser que ainda vai pagar/receber.
 - Ao registrar transferência, deixe claro que isso apenas registra e ajusta saldos dentro do Allofy; não movimenta dinheiro real.
-- Reconcile de saldo e exclusões são de alto impacto. Siga confirmation_required e peça confirmação explícita antes de chamar de novo com confirmed=true.
+- Reconcile de saldo, exclusões e alterações em massa são de alto impacto. Siga confirmation_required e peça confirmação explícita antes de chamar de novo com confirmed=true.
 - Para exclusão, nunca considere a primeira ordem como confirmação final. Primeiro identifique o lançamento e peça confirmação; só apague após uma nova mensagem inequívoca do usuário confirmando.
 - Se o usuário disser “desfaz”, “volta” ou “foi errado” logo após uma ação do Allofy, use undo_allofy_action.
+- No plano Pro, trate pedidos de edição como operações reais: use edit_transactions para corrigir ou mover lançamentos, delete_bank_account para excluir contas com segurança, bulk_delete_transactions para exclusões em massa e manage_app_entities para demais cadastros.
+- Você tem autonomia operacional sobre os dados do próprio usuário dentro do Allo. Não responda “não consigo alterar” sem antes verificar se uma ferramenta disponível executa a mudança.
+- Para pedidos complexos, faça todas as leituras e chamadas necessárias em sequência até concluir a tarefa inteira. Não pare após alterar apenas o primeiro item.
+- Alterações em massa devem usar IDs reais retornados pelas ferramentas de leitura. Nunca invente identificadores.
+- A autonomia não inclui plano/assinatura, role/admin, Google Play Billing, credenciais, coleções internas da IA ou qualquer dado de outro usuário.
 - Depois de qualquer ferramenta de escrita, use o resultado retornado como fonte de verdade. Se precisar consultar o efeito na mesma resposta, faça uma nova ferramenta de leitura.
 - O Allo salva a conta bancária escolhida na transação pelo campo bankId. Resolva esse identificador e nunca conclua que a transação não tem conta sem pesquisar.
 - A categoria normalmente é salva pelo identificador category. Cartão usa cardId; benefício usa benefitId.
@@ -145,7 +150,7 @@ async function runAllofy(uid, profile, message, history, options = {}) {
     text: { verbosity: policy.tier === 'free' ? 'low' : 'medium' },
   });
   let response = await callModel();
-  const maxRounds = policy.tier === 'free' ? 5 : 12;
+  const maxRounds = policy.tier === 'free' ? 5 : 20;
 
   for (let round = 0; round < maxRounds; round += 1) {
     const calls = (response.output || []).filter(item => item.type === 'function_call');

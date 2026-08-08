@@ -2095,7 +2095,7 @@ function appCapabilities() {
       { name: 'Planejamento', capabilities: ['metas', 'dívidas', 'cofres', 'orçamentos por categoria'] },
       { name: 'Benefícios', capabilities: ['VA/VR/combustível', 'usos e saldo restante'] },
       { name: 'Motorista', capabilities: ['jornadas', 'corridas', 'receitas', 'gastos', 'abastecimentos', 'veículos'] },
-      { name: 'Allofy', capabilities: ['pesquisa detalhada', 'resumos', 'comparações', 'filtros por data, conta, cartão, categoria e status', 'criar receitas e despesas', 'registrar compras no cartão', 'registrar transferências internas', 'criar metas, dívidas, categorias, contas e cartões', 'registrar pagamentos de dívida', 'atualizar fatura', 'desfazer ações auditadas', 'voz e modo ao vivo'] },
+      { name: 'Allofy', capabilities: ['pesquisa detalhada', 'resumos', 'comparações', 'filtros por data, conta, cartão, categoria e status', 'criar receitas e despesas', 'registrar compras no cartão', 'editar e mover transações', 'alterações em massa', 'excluir contas com tratamento de vínculos', 'registrar transferências internas', 'criar/editar/excluir metas, dívidas, categorias, contas, cartões, benefícios e cofres', 'registrar pagamentos de dívida', 'atualizar fatura', 'desfazer ações auditadas', 'voz e modo ao vivo'] },
     ],
     dataRelationships: {
       transactionAccount: 'A conta escolhida na transação é salva em bankId e deve ser resolvida na lista banks.',

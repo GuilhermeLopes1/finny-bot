@@ -4,7 +4,7 @@ const { hydrateProfile } = require('./v39ProfileService');
 
 const ACTION_LOG_COLLECTION = 'allofy_action_logs';
 const ACTION_VERSION = 1;
-const MAX_AUDIT_OPERATIONS = 12;
+const MAX_AUDIT_OPERATIONS = 200;
 
 function nowIso() { return new Date().toISOString(); }
 function money(value) { return Math.round((Number(value) || 0) * 100) / 100; }
@@ -27,7 +27,9 @@ function requestActionId(requestId = '') {
 }
 function publicDocPath(ref, uid) {
   const p = ref.path;
-  if (!p.startsWith(`users/${uid}/`)) throw new Error('Caminho de escrita fora do usuário atual.');
+  if (p !== `users/${uid}` && !p.startsWith(`users/${uid}/`)) {
+    throw new Error('Caminho de escrita fora do usuário atual.');
+  }
   return p;
 }
 function cloneData(value) {
@@ -153,6 +155,117 @@ function resolveDebt(profile, query) {
   return resultError('debt_not_found', `Não encontrei a dívida “${text(query, 80)}”.`);
 }
 
+
+const GENERIC_ENTITY_COLLECTIONS = Object.freeze({
+  bank: 'banks',
+  card: 'cards',
+  category: 'categories',
+  goal: 'goals',
+  debt: 'debts',
+  benefit: 'benefits',
+  vault: 'cofres',
+  calculator_simulation: 'calculatorSimulations',
+  import_record: 'importHistory',
+  driver_journey: 'uberJornadas',
+  driver_ride: 'uberCorridas',
+  driver_expense: 'uberGastos',
+  driver_fuel: 'uberAbastec',
+  driver_vehicle: 'uberVeiculos',
+});
+
+const FORBIDDEN_PATCH_FIELDS = new Set([
+  'id','_v39Order','uid','userId','ownerUid',
+  'role','isAdmin','banned','isPro','isMotorista','isEmpresa',
+  'proPlan','proSince','proExpiresAt','motoristaExpiresAt',
+  'proCancelled','proCancelledAt','proSubscriptionId','proSubscriptionStatus',
+  'proPaymentId','proDaysLeft','proExpired','proExpiredAt',
+  'proAwardedBy','proAwardMonth','proPrizeDays',
+  'referralProcessed','referredBy','referralCount',
+  'alloPoints','apLastLogin','apStreak','apStreakLastDate',
+  'proBillingProvider','googlePlayProductId','googlePlayPurchaseTokenHash',
+  'googlePlayLatestOrderId','googlePlaySubscriptionState',
+  'googlePlayAcknowledgementState','googlePlayAutoRenewing',
+  'googlePlayTestPurchase','googlePlayExpiresAt','googlePlayEntitled',
+  'googlePlayLastVerifiedAt','legacyProExpiresAt','proManualExpiresAt',
+  'proPrizeExpiresAt','proReferralExpiresAt',
+]);
+
+function explicitImpactConfirmation(message) {
+  const m = normalize(message);
+  return /(confirmo|confirmado|pode\s+(fazer|alterar|mover|prosseguir|executar|apagar|excluir)|sim.*(pode|confirm)|faz\s+isso\s+mesmo|faca\s+isso\s+mesmo|apaga\s+mesmo|exclui\s+mesmo)/.test(m);
+}
+
+function transactionEffect(item = {}) {
+  if (item.coveredByBenefit === true || !item.bankId) return 0;
+  const status = normalize(item.status || 'paid');
+  if (status !== 'paid' && status !== 'pago' && status !== 'paga') return 0;
+  const amount = money(item.amount ?? item.value ?? item.valor);
+  const type = normalize(item.type || item.tipo);
+  if (['income','receita','entrada','credit','credito'].includes(type)) return amount;
+  if (['expense','despesa','saida','debit','debito'].includes(type)) return -amount;
+  return 0;
+}
+
+function findTransactionsByIds(profile, ids = []) {
+  const wanted = [...new Set((ids || []).map(value => text(value, 160)).filter(Boolean))];
+  const primary = new Map((profile.transactions || []).map(item => [String(item.id || ''), { item, collection: 'transactions' }]));
+  const cards = new Map((profile.cardTransactions || []).map(item => [String(item.id || ''), { item, collection: 'cardTransactions' }]));
+  const found = [];
+  const missing = [];
+  for (const id of wanted) {
+    const match = primary.get(id) || cards.get(id);
+    if (match) found.push(match);
+    else missing.push(id);
+  }
+  return { found, missing };
+}
+
+function parsePatchChanges(changes = []) {
+  if (!Array.isArray(changes) || !changes.length) return resultError('changes_required', 'Informe quais campos devem ser alterados.');
+  const patch = {};
+  for (const change of changes.slice(0, 30)) {
+    const field = text(change?.field, 80);
+    if (!/^[A-Za-z][A-Za-z0-9_]{0,79}$/.test(field)) {
+      return resultError('invalid_field', `Campo inválido: “${field || 'vazio'}”.`);
+    }
+    if (FORBIDDEN_PATCH_FIELDS.has(field) || /^googlePlay/i.test(field) || /^pro[A-Z_]/.test(field)) {
+      return resultError('protected_field', `O campo “${field}” é protegido e não pode ser alterado pelo Allofy.`);
+    }
+    const raw = String(change?.valueJson ?? '');
+    if (raw.length > 12000) return resultError('value_too_large', `O valor do campo “${field}” é grande demais.`);
+    try {
+      patch[field] = JSON.parse(raw);
+    } catch (_) {
+      return resultError('invalid_json_value', `O valor de “${field}” precisa ser JSON válido.`);
+    }
+  }
+  if (!Object.keys(patch).length) return resultError('changes_required', 'Nenhuma alteração válida foi informada.');
+  return { ok: true, patch };
+}
+
+function replaceBankReferences(value, oldBankId, newBankId) {
+  let replacements = 0;
+  function walk(node) {
+    if (Array.isArray(node)) return node.map(walk);
+    if (!node || typeof node !== 'object') return node;
+    const copy = {};
+    for (const [key, child] of Object.entries(node)) {
+      if (['bankId','accountId','contaId'].includes(key) && String(child || '') === String(oldBankId)) {
+        copy[key] = newBankId || null;
+        replacements += 1;
+      } else {
+        copy[key] = walk(child);
+      }
+    }
+    return copy;
+  }
+  return { value: walk(cloneData(value)), replacements };
+}
+
+function normalizeEntityCollection(entity) {
+  return GENERIC_ENTITY_COLLECTIONS[String(entity || '')] || null;
+}
+
 function normalizeSource(source) {
   return ['text', 'voice', 'live', 'widget', 'widget_live'].includes(String(source)) ? String(source) : 'text';
 }
@@ -172,7 +285,13 @@ async function performAction({ uid, action, requestId, source, refs, compute }) 
     const byPath = new Map(snaps.map((snap, index) => [uniqueRefs[index].path, snap]));
     const planned = await compute(byPath);
     if (!planned?.ok) return planned;
-    const writes = (planned.writes || []).slice(0, MAX_AUDIT_OPERATIONS);
+    const writes = planned.writes || [];
+    if (writes.length > MAX_AUDIT_OPERATIONS) {
+      return resultError(
+        'too_many_operations',
+        `Essa ação precisa alterar ${writes.length} registros de uma vez. Divida em blocos de até ${MAX_AUDIT_OPERATIONS} itens.`
+      );
+    }
     const auditOps = [];
     for (const write of writes) {
       const path = publicDocPath(write.ref, uid);
@@ -391,6 +510,355 @@ async function updateCardInvoice(uid, args, context) {
   return performAction({ uid, action: 'update_card_invoice', requestId: context.requestId, source: context.source, refs: [ref], compute: byPath => { if (!byPath.get(ref.path)?.exists) return resultError('card_not_found', 'O cartão deixou de existir.'); return { ok: true, writes: [{ type: 'set', ref, merge: true, data: { currentInvoice: invoice, used: args.used == null ? invoice : Math.max(0, money(args.used)), invoiceSource: 'manual', updatedAt: at } }], result: mutationResult('update_card_invoice', null, `Fatura de ${cardLabel(card)} atualizada para R$ ${invoice.toFixed(2).replace('.', ',')}.`, { entity: { kind: 'card', id: card.id }, refresh: ['cards'] }) }; } });
 }
 
+
+async function editTransactions(uid, args, context) {
+  const profile = await freshProfile(uid);
+  const ids = [...new Set((args.transactions || []).map(value => text(value, 160)).filter(Boolean))].slice(0, 100);
+  if (!ids.length) return resultError('transactions_required', 'Informe ao menos um lançamento para alterar.');
+
+  const selected = findTransactionsByIds(profile, ids);
+  if (selected.missing.length) {
+    return resultError('transaction_not_found', 'Alguns lançamentos não foram encontrados.', { missing: selected.missing.slice(0, 20) });
+  }
+
+  const massEdit = selected.found.length > 10;
+  if (massEdit && (args.confirmed !== true || !explicitImpactConfirmation(context.userMessage || ''))) {
+    return resultError(
+      'confirmation_required',
+      `Você pediu uma alteração em massa de ${selected.found.length} lançamentos. Confirme explicitamente para continuar.`,
+      { confirmation: { action: 'edit_transactions', count: selected.found.length } }
+    );
+  }
+
+  const wantsAccountChange = Boolean(args.account) || args.clearAccount === true;
+  const wantsCardChange = Boolean(args.card) || args.clearCard === true;
+  if (wantsAccountChange && selected.found.some(row => row.collection === 'cardTransactions')) {
+    return resultError('account_not_applicable', 'Compra no cartão não possui conta bancária direta. Para ela, altere o cartão.');
+  }
+  if (wantsCardChange && selected.found.some(row => row.collection === 'transactions')) {
+    return resultError('card_not_applicable', 'Uma transação bancária não pode virar compra no cartão apenas trocando o cartão.');
+  }
+
+  const bankResult = args.clearAccount === true ? { ok: true, item: null } : resolveBank(profile, args.account, false);
+  if (!bankResult.ok) return bankResult;
+  const cardResult = args.clearCard === true ? { ok: true, item: null } : resolveCard(profile, args.card, false);
+  if (!cardResult.ok) return cardResult;
+
+  let category = null;
+  if (args.clearCategory !== true && args.category) {
+    const categoryResult = resolveCategory(profile, args.category, args.type || '', '');
+    if (!categoryResult.ok) return categoryResult;
+    category = categoryResult.item;
+  }
+
+  const refs = [];
+  const bankIds = new Set();
+  for (const row of selected.found) {
+    refs.push(itemRef(uid, row.collection, row.item.id));
+    if (row.collection === 'transactions' && row.item.bankId) bankIds.add(String(row.item.bankId));
+  }
+  if (bankResult.item?.id) bankIds.add(String(bankResult.item.id));
+  bankIds.forEach(id => refs.push(itemRef(uid, 'banks', id)));
+
+  const at = nowIso();
+  return performAction({
+    uid,
+    action: 'edit_transactions',
+    requestId: context.requestId,
+    source: context.source,
+    refs,
+    compute: byPath => {
+      const writes = [];
+      const bankDelta = new Map();
+
+      for (const row of selected.found) {
+        const ref = itemRef(uid, row.collection, row.item.id);
+        const current = byPath.get(ref.path)?.data();
+        if (!current) return resultError('transaction_not_found', `O lançamento ${row.item.id} deixou de existir.`);
+
+        const patch = { updatedAt: at, allofyEdited: true };
+        if (row.collection === 'transactions') {
+          const oldEffect = transactionEffect(current);
+          const oldBankId = current.bankId ? String(current.bankId) : null;
+
+          if (args.description != null) {
+            const description = text(args.description, 160);
+            patch.description = description;
+            patch.desc = description;
+          }
+          if (args.amount != null) {
+            const amount = money(args.amount);
+            if (!(amount > 0)) return resultError('invalid_amount', 'O novo valor precisa ser maior que zero.');
+            patch.amount = amount;
+          }
+          if (args.type != null) patch.type = args.type;
+          if (args.date != null) {
+            if (!validDate(args.date)) return resultError('invalid_date', 'Use a data no formato AAAA-MM-DD.');
+            patch.date = args.date;
+          }
+          if (args.clearCategory === true) patch.category = '';
+          else if (args.category) patch.category = category?.id || text(args.category, 100);
+
+          if (args.clearAccount === true) patch.bankId = null;
+          else if (args.account) patch.bankId = bankResult.item?.id || null;
+
+          if (args.status != null) patch.status = args.status;
+          if (args.recurrence != null) patch.recurrence = args.recurrence;
+          if (args.notes != null) patch.notes = text(args.notes, 500);
+
+          const after = { ...current, ...patch };
+          const newEffect = transactionEffect(after);
+          const newBankId = after.bankId ? String(after.bankId) : null;
+          if (oldBankId && oldEffect) bankDelta.set(oldBankId, money((bankDelta.get(oldBankId) || 0) - oldEffect));
+          if (newBankId && newEffect) bankDelta.set(newBankId, money((bankDelta.get(newBankId) || 0) + newEffect));
+        } else {
+          if (args.description != null) patch.descricao = text(args.description, 160);
+          if (args.amount != null) {
+            const amount = money(args.amount);
+            if (!(amount > 0)) return resultError('invalid_amount', 'O novo valor precisa ser maior que zero.');
+            const installments = Math.max(1, Number(current.parcelas || 1) | 0);
+            patch.valorTotal = amount;
+            patch.valorParcela = money(amount / installments);
+            patch.valorFinal = amount;
+            patch.jurosTotal = 0;
+            patch.temJuros = false;
+          }
+          if (args.date != null) {
+            if (!validDate(args.date)) return resultError('invalid_date', 'Use a data no formato AAAA-MM-DD.');
+            patch.dataCompra = args.date;
+          }
+          if (args.clearCategory === true) patch.categoria = '';
+          else if (args.category) patch.categoria = category?.name || text(args.category, 100);
+          if (args.clearCard === true) patch.cardId = null;
+          else if (args.card) patch.cardId = cardResult.item?.id || null;
+          if (args.status != null) patch.status = args.status;
+          if (args.notes != null) patch.obs = text(args.notes, 500);
+        }
+
+        writes.push({ type: 'set', ref, merge: true, data: patch });
+      }
+
+      for (const [bankId, delta] of bankDelta.entries()) {
+        if (!delta) continue;
+        const bankRef = itemRef(uid, 'banks', bankId);
+        const bank = byPath.get(bankRef.path)?.data();
+        if (!bank) return resultError('bank_not_found', 'Uma das contas vinculadas deixou de existir.');
+        const nextBalance = money(money(bank.balance) + delta);
+        writes.push({ type: 'set', ref: bankRef, merge: true, data: { balance: nextBalance, updatedAt: at } });
+      }
+
+      const count = selected.found.length;
+      return {
+        ok: true,
+        writes,
+        result: mutationResult(
+          'edit_transactions',
+          null,
+          `${count} lançamento${count === 1 ? '' : 's'} atualizado${count === 1 ? '' : 's'} pelo Allofy.`,
+          { count, refresh: ['transactions','cardTransactions','banks','cards'] }
+        ),
+      };
+    },
+  });
+}
+
+async function bulkDeleteTransactions(uid, args, context) {
+  const profile = await freshProfile(uid);
+  const ids = [...new Set((args.transactions || []).map(value => text(value, 160)).filter(Boolean))].slice(0, 100);
+  if (!ids.length) return resultError('transactions_required', 'Informe ao menos um lançamento para excluir.');
+  const selected = findTransactionsByIds(profile, ids);
+  if (selected.missing.length) return resultError('transaction_not_found', 'Alguns lançamentos não foram encontrados.', { missing: selected.missing.slice(0, 20) });
+
+  if (args.confirmed !== true || !explicitImpactConfirmation(context.userMessage || '')) {
+    return resultError(
+      'confirmation_required',
+      `Confirme explicitamente antes de excluir ${selected.found.length} lançamento${selected.found.length === 1 ? '' : 's'}.`,
+      { confirmation: { action: 'bulk_delete_transactions', count: selected.found.length, ids } }
+    );
+  }
+
+  const refs = [];
+  const bankIds = new Set();
+  selected.found.forEach(row => {
+    refs.push(itemRef(uid, row.collection, row.item.id));
+    if (row.collection === 'transactions' && row.item.bankId) bankIds.add(String(row.item.bankId));
+  });
+  bankIds.forEach(id => refs.push(itemRef(uid, 'banks', id)));
+  const at = nowIso();
+
+  return performAction({
+    uid, action: 'bulk_delete_transactions', requestId: context.requestId, source: context.source, refs,
+    compute: byPath => {
+      const writes = [];
+      const bankDelta = new Map();
+      for (const row of selected.found) {
+        const ref = itemRef(uid, row.collection, row.item.id);
+        const current = byPath.get(ref.path)?.data();
+        if (!current) continue;
+        writes.push({ type: 'delete', ref });
+        if (row.collection === 'transactions' && current.bankId) {
+          const effect = transactionEffect(current);
+          if (effect) {
+            const bankId = String(current.bankId);
+            bankDelta.set(bankId, money((bankDelta.get(bankId) || 0) - effect));
+          }
+        }
+      }
+      for (const [bankId, delta] of bankDelta.entries()) {
+        const bankRef = itemRef(uid, 'banks', bankId);
+        const bank = byPath.get(bankRef.path)?.data();
+        if (bank) writes.push({ type: 'set', ref: bankRef, merge: true, data: { balance: money(money(bank.balance) + delta), updatedAt: at } });
+      }
+      const count = selected.found.length;
+      return {
+        ok: true,
+        writes,
+        result: mutationResult('bulk_delete_transactions', null, `${count} lançamento${count === 1 ? '' : 's'} excluído${count === 1 ? '' : 's'}.`, {
+          count, refresh: ['transactions','cardTransactions','banks','cards'],
+        }),
+      };
+    },
+  });
+}
+
+async function deleteBankAccount(uid, args, context) {
+  const profile = await freshProfile(uid);
+  const bankResult = resolveBank(profile, args.account, true); if (!bankResult.ok) return bankResult;
+  const bank = bankResult.item;
+  const replacementResult = args.replacementAccount ? resolveBank(profile, args.replacementAccount, true) : { ok: true, item: null };
+  if (!replacementResult.ok) return replacementResult;
+  const replacement = replacementResult.item;
+  if (replacement && replacement.id === bank.id) return resultError('same_account', 'A conta substituta precisa ser diferente da conta excluída.');
+
+  const dependentCollections = [
+    'transactions','cards','categories','goals','debts','benefits','calculatorSimulations','importHistory',
+    'cofres','uberJornadas','uberCorridas','uberGastos','uberAbastec','uberVeiculos','cardTransactions',
+  ];
+  const dependencies = [];
+  for (const collection of dependentCollections) {
+    for (const item of Array.isArray(profile[collection]) ? profile[collection] : []) {
+      if (!item?.id) continue;
+      const replaced = replaceBankReferences(item, bank.id, replacement?.id || null);
+      if (replaced.replacements > 0) dependencies.push({ collection, item, data: replaced.value, replacements: replaced.replacements });
+    }
+  }
+
+  const balance = money(bank.balance);
+  const replacementText = replacement ? ` Os vínculos serão movidos para ${bankLabel(replacement)}.` : ' Os vínculos serão deixados sem conta.';
+  const balanceText = balance ? ` O saldo cadastrado da conta é R$ ${balance.toFixed(2).replace('.', ',')}.` : '';
+  if (args.confirmed !== true || !explicitImpactConfirmation(context.userMessage || '')) {
+    return resultError(
+      'confirmation_required',
+      `Confirme explicitamente a exclusão de ${bankLabel(bank)}.${replacementText}${balanceText}`,
+      {
+        confirmation: {
+          action: 'delete_bank_account',
+          accountId: bank.id,
+          account: bankLabel(bank),
+          relatedRecords: dependencies.length,
+          balance,
+          replacementAccountId: replacement?.id || null,
+          moveStoredBalance: args.moveStoredBalance === true,
+        },
+      }
+    );
+  }
+
+  const bankRef = itemRef(uid, 'banks', bank.id);
+  const refs = [bankRef, ...dependencies.map(dep => itemRef(uid, dep.collection, dep.item.id))];
+  if (replacement) refs.push(itemRef(uid, 'banks', replacement.id));
+  const at = nowIso();
+
+  return performAction({
+    uid, action: 'delete_bank_account', requestId: context.requestId, source: context.source, refs,
+    compute: byPath => {
+      const currentBank = byPath.get(bankRef.path)?.data();
+      if (!currentBank) return resultError('bank_not_found', 'A conta já não existe.');
+      const writes = [];
+      for (const dep of dependencies) {
+        const ref = itemRef(uid, dep.collection, dep.item.id);
+        if (byPath.get(ref.path)?.exists) writes.push({ type: 'set', ref, data: { ...dep.data, updatedAt: at }, merge: false });
+      }
+      if (replacement && args.moveStoredBalance === true) {
+        const replacementRef = itemRef(uid, 'banks', replacement.id);
+        const currentReplacement = byPath.get(replacementRef.path)?.data();
+        if (!currentReplacement) return resultError('bank_not_found', 'A conta substituta deixou de existir.');
+        writes.push({
+          type: 'set',
+          ref: replacementRef,
+          merge: true,
+          data: { balance: money(money(currentReplacement.balance) + money(currentBank.balance)), updatedAt: at },
+        });
+      }
+      writes.push({ type: 'delete', ref: bankRef });
+      return {
+        ok: true,
+        writes,
+        result: mutationResult('delete_bank_account', null, `Conta “${bankLabel(currentBank)}” excluída. ${dependencies.length} vínculo${dependencies.length === 1 ? '' : 's'} atualizado${dependencies.length === 1 ? '' : 's'}.`, {
+          entity: { kind: 'bank', id: bank.id },
+          relatedRecords: dependencies.length,
+          refresh: ['banks','transactions','cards','cardTransactions','debts','cofres','benefits'],
+        }),
+      };
+    },
+  });
+}
+
+async function manageAppEntities(uid, args, context) {
+  const collection = normalizeEntityCollection(args.entity);
+  if (!collection) return resultError('entity_not_supported', 'Esse tipo de cadastro ainda não está disponível para edição genérica.');
+  if (args.entity === 'bank' && args.operation === 'delete') {
+    return resultError('use_delete_bank_account', 'Para excluir conta bancária use a ação específica delete_bank_account, que trata os vínculos com segurança.');
+  }
+
+  const ids = [...new Set((args.ids || []).map(value => text(value, 160)).filter(Boolean))].slice(0, 100);
+  if (!ids.length) return resultError('ids_required', 'Informe os identificadores dos cadastros que devem ser alterados.');
+  const deleting = args.operation === 'delete';
+  const massChange = ids.length > 10;
+  if ((deleting || massChange) && (args.confirmed !== true || !explicitImpactConfirmation(context.userMessage || ''))) {
+    return resultError(
+      'confirmation_required',
+      deleting
+        ? `Confirme explicitamente antes de excluir ${ids.length} cadastro${ids.length === 1 ? '' : 's'}.`
+        : `Confirme explicitamente a alteração em massa de ${ids.length} cadastros.`,
+      { confirmation: { action: 'manage_app_entities', entity: args.entity, operation: args.operation, count: ids.length } }
+    );
+  }
+
+  let patch = null;
+  if (!deleting) {
+    const parsed = parsePatchChanges(args.changes);
+    if (!parsed.ok) return parsed;
+    patch = parsed.patch;
+    if (args.entity === 'bank' && Object.prototype.hasOwnProperty.call(patch, 'balance')) {
+      return resultError('use_reconcile_balance', 'Para alterar saldo bancário use reconcile_bank_balance, que mantém auditoria específica.');
+    }
+  }
+
+  const refs = ids.map(id => itemRef(uid, collection, id));
+  const at = nowIso();
+  return performAction({
+    uid, action: 'manage_app_entities', requestId: context.requestId, source: context.source, refs,
+    compute: byPath => {
+      const missing = refs.filter(ref => !byPath.get(ref.path)?.exists).map(ref => ref.id);
+      if (missing.length) return resultError('entity_not_found', 'Alguns cadastros não foram encontrados.', { missing: missing.slice(0, 20) });
+      const writes = refs.map(ref => deleting
+        ? ({ type: 'delete', ref })
+        : ({ type: 'set', ref, merge: true, data: { ...patch, updatedAt: at, allofyEdited: true } }));
+      const count = refs.length;
+      const verb = deleting ? 'excluído' : 'atualizado';
+      return {
+        ok: true,
+        writes,
+        result: mutationResult('manage_app_entities', null, `${count} cadastro${count === 1 ? '' : 's'} ${verb}${count === 1 ? '' : 's'} pelo Allofy.`, {
+          count, entityType: args.entity, refresh: [collection],
+        }),
+      };
+    },
+  });
+}
+
+
 function findTransaction(profile, query) {
   const all = [...(profile.transactions || []), ...(profile.cardTransactions || [])];
   const byId = all.find(t => String(t.id) === String(query)); if (byId) return { item: byId, collection: (profile.cardTransactions || []).includes(byId) ? 'cardTransactions' : 'transactions' };
@@ -456,6 +924,10 @@ const actionTools = [
   { type: 'function', name: 'reconcile_bank_balance', description: 'Altera o saldo cadastrado de uma conta no Allofy. É uma alteração de alto impacto e exige confirmação explícita.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { account: { type: 'string' }, newBalance: { type: 'number' }, note: nullableString, confirmed: { type: 'boolean' } }, required: ['account', 'newBalance', 'note', 'confirmed'] } },
   { type: 'function', name: 'create_card', description: 'Cadastra um cartão no Allofy. Não solicita nem cria cartão real.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { name: { type: 'string' }, brand: nullableString, last4: nullableString, limit: { type: 'number', minimum: 0 }, closingDay: { type: 'integer', minimum: 1, maximum: 31 }, dueDay: { type: 'integer', minimum: 1, maximum: 31 } }, required: ['name', 'brand', 'last4', 'limit', 'closingDay', 'dueDay'] } },
   { type: 'function', name: 'update_card_invoice', description: 'Atualiza manualmente o valor da fatura e limite usado de um cartão cadastrado.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { card: { type: 'string' }, invoice: { type: 'number', minimum: 0 }, used: { type: ['number', 'null'], minimum: 0 } }, required: ['card', 'invoice', 'used'] } },
+  { type: 'function', name: 'edit_transactions', description: 'Edita uma ou várias transações existentes, inclusive trocar conta, categoria, valor, status, data e descrição. Mantém o saldo das contas consistente ao mover ou alterar lançamentos pagos. Para alteração em massa acima de 10 itens exige confirmação explícita.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { transactions: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } }, description: nullableString, amount: { type: ['number','null'], exclusiveMinimum: 0 }, type: { type: ['string','null'], enum: ['expense','income',null] }, date: nullableString, category: nullableString, clearCategory: { type: 'boolean' }, account: nullableString, clearAccount: { type: 'boolean' }, card: nullableString, clearCard: { type: 'boolean' }, status: { type: ['string','null'], enum: ['paid','pending','partial','cancelled',null] }, recurrence: { type: ['string','null'], enum: ['fixed','variable','installment',null] }, notes: nullableString, confirmed: { type: 'boolean' } }, required: ['transactions','description','amount','type','date','category','clearCategory','account','clearAccount','card','clearCard','status','recurrence','notes','confirmed'] } },
+  { type: 'function', name: 'bulk_delete_transactions', description: 'Exclui vários lançamentos de uma vez e corrige os saldos bancários afetados. Sempre exige confirmação explícita em mensagem separada.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { transactions: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } }, confirmed: { type: 'boolean' } }, required: ['transactions','confirmed'] } },
+  { type: 'function', name: 'delete_bank_account', description: 'Exclui uma conta cadastrada no Allofy e trata referências dessa conta em outros registros. Pode mover vínculos para outra conta ou deixá-los sem conta. Opcionalmente soma o saldo cadastrado à conta substituta quando o usuário pedir para mesclar contas. Sempre exige confirmação explícita.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { account: { type: 'string' }, replacementAccount: nullableString, moveStoredBalance: { type: 'boolean' }, confirmed: { type: 'boolean' } }, required: ['account','replacementAccount','moveStoredBalance','confirmed'] } },
+  { type: 'function', name: 'manage_app_entities', description: 'Ferramenta operacional genérica Pro para atualizar ou excluir cadastros do usuário em massa quando não houver ferramenta específica. Suporta contas (edição, não exclusão/saldo), cartões, categorias, metas, dívidas, benefícios, cofres, simuladores, importações e dados do modo motorista. Use IDs retornados pelas ferramentas de leitura. Para exclusão ou mais de 10 itens exige confirmação explícita. Nunca altera plano, permissões, Google Play ou campos internos protegidos.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { entity: { type: 'string', enum: ['bank','card','category','goal','debt','benefit','vault','calculator_simulation','import_record','driver_journey','driver_ride','driver_expense','driver_fuel','driver_vehicle'] }, operation: { type: 'string', enum: ['update','delete'] }, ids: { type: 'array', minItems: 1, maxItems: 100, items: { type: 'string' } }, changes: { type: 'array', maxItems: 30, items: { type: 'object', additionalProperties: false, properties: { field: { type: 'string', minLength: 1, maxLength: 80 }, valueJson: { type: 'string', maxLength: 12000 } }, required: ['field','valueJson'] } }, confirmed: { type: 'boolean' } }, required: ['entity','operation','ids','changes','confirmed'] } },
   { type: 'function', name: 'delete_transaction', description: 'Exclui uma transação ou compra. SEMPRE exige confirmação explícita do usuário em uma mensagem separada; nunca use apenas por inferência.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { transaction: { type: 'string' }, confirmed: { type: 'boolean' } }, required: ['transaction', 'confirmed'] } },
   { type: 'function', name: 'undo_allofy_action', description: 'Desfaz a ação mutável mais recente feita pelo Allofy, ou uma ação específica pelo actionId. Use quando o usuário disser “desfaz”, “volta” ou “foi errado”.', strict: true, parameters: { type: 'object', additionalProperties: false, properties: { actionId: nullableString }, required: ['actionId'] } },
 ];
@@ -476,6 +948,10 @@ async function executeAllofyAction(name, args, uid, context = {}) {
   if (name === 'reconcile_bank_balance') return reconcileBankBalance(uid, args, context);
   if (name === 'create_card') return createCard(uid, args, context);
   if (name === 'update_card_invoice') return updateCardInvoice(uid, args, context);
+  if (name === 'edit_transactions') return editTransactions(uid, args, context);
+  if (name === 'bulk_delete_transactions') return bulkDeleteTransactions(uid, args, context);
+  if (name === 'delete_bank_account') return deleteBankAccount(uid, args, context);
+  if (name === 'manage_app_entities') return manageAppEntities(uid, args, context);
   if (name === 'delete_transaction') return deleteTransaction(uid, args, context);
   if (name === 'undo_allofy_action') return undoAction(uid, args, context);
   throw new Error(`Ação desconhecida: ${name}`);
