@@ -3,15 +3,16 @@ const { createResponse, outputText } = require('../config/openai');
 const { tools: readTools, executeAllofyTool, financialOverview } = require('../services/allofyTools');
 const { actionTools, isActionTool, executeAllofyAction, normalizeSource } = require('../services/allofyActionService');
 const logger = require('../utils/logger');
+const { analyzeAllofyImage, loadRecentImageContext, clearImageContext, compactImageContext, matchImageItem } = require('../services/allofyImageService');
 const { cleanAllofyFormatting } = require('../utils/textFormatting');
-const { policyForProfile, consumeCommand } = require('../services/allofyUsageService');
+const { policyForProfile, consumeChatRequest } = require('../services/allofyUsageService');
 
 const tools = [...readTools, ...actionTools];
 const FREE_READ_TOOLS = new Set([
   'get_app_capabilities','get_app_overview','get_financial_overview','search_transactions',
   'get_accounts_and_cards','get_categories','get_planning'
 ]);
-const FREE_ACTION_TOOLS = new Set(['create_transaction','create_card_purchase']);
+const FREE_ACTION_TOOLS = new Set(['create_transaction','create_card_purchase','import_image_financial_items']);
 
 function toolsetForProfile(profile = {}) {
   const policy = policyForProfile(profile);
@@ -87,6 +88,31 @@ REGRAS DE RESPOSTA:
 - Se a ferramenta devolver suggestedResponse, use-o como base factual sem remover pendências ou trocar valores.
 - Se faltarem dados, diga exatamente o que falta.`;
 
+function imageContextInstructions(context, freshUpload = false) {
+  if (!context) return '';
+  const count = Number(context.financialItemCount || 0);
+  return `
+
+CONTEXTO DE IMAGEM DO ALLOFY — EXTRAÍDO PELO SERVIDOR:
+${compactImageContext(context)}
+
+REGRAS PARA ESTE CONTEXTO:
+- O arquivo bruto da imagem não está disponível nesta etapa; use somente os fatos estruturados acima.
+- Nunca invente um campo ausente. Se cartão/conta indispensável não estiver claro, pergunte ao usuário.
+- Se houver aviso de baixa confiança, diga o que precisa ser conferido.
+- Este contexto é temporário e existe para permitir perguntas como “pode lançar” sem reenviar a foto.
+${freshUpload && count > 1 ? '- ESTA É A PRIMEIRA ANÁLISE DE UMA IMAGEM COM VÁRIOS LANÇAMENTOS. Não execute nenhuma escrita agora. Resuma o que encontrou, informe quantidade/total quando disponíveis e peça uma confirmação explícita antes de lançar.' : ''}
+- Em uma confirmação posterior de vários itens, PREFIRA import_image_financial_items para importar o lote inteiro de uma vez. Passe o cartão/conta se estiverem claros e confirmed=true. Para um único item, use create_card_purchase ou create_transaction normalmente.
+- Se o usuário estiver falando de outro assunto, ignore este contexto antigo.`;
+}
+
+function referencesRecentImage(message) {
+  const text = normalizeIntentText(message);
+  if (/\b(imagem|foto|print|fatura|comprovante|anexo)\b/.test(text)) return true;
+  if (/^(sim|confirmo|confirmado|pode fazer|pode registrar|pode lancar|lanca|lancar)(\b|$)/.test(text)) return true;
+  return /\b(isso|esses|essas|todos|todas)\b/.test(text) && /\b(lanca|lancar|registra|registrar|confirma|confirmar)\b/.test(text);
+}
+
 function normalizeIntentText(value) {
   return String(value || '').normalize('NFD').replace(/[\u0300-\u036f]/g, '').toLocaleLowerCase('pt-BR').trim();
 }
@@ -118,25 +144,28 @@ async function saveMessage(uid, role, content) {
 
 async function runAllofy(uid, profile, message, history, options = {}) {
   const { policy, tools: sessionTools } = toolsetForProfile(profile);
-  if (wantsCurrentMonthCompleteSummary(message)) {
+  if (!options.imageContext && wantsCurrentMonthCompleteSummary(message)) {
     const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null });
     return { reply: cleanAllofyFormatting(overview.suggestedExecutiveResponse), mutations: [], policy };
   }
-  if (wantsCurrentMonthSimpleSummary(message)) {
+  if (!options.imageContext && wantsCurrentMonthSimpleSummary(message)) {
     const overview = financialOverview(profile, { period: 'month', startDate: null, endDate: null, exactDate: null });
     return { reply: cleanAllofyFormatting(overview.suggestedResponse), mutations: [], policy };
   }
 
   const historyLimit = policy.tier === 'free' ? 8 : 18;
+  const imageContext = options.imageContext || null;
+  const userContent = String(message) + imageContextInstructions(imageContext, options.imageWasJustUploaded === true);
   const input = [
     ...history.slice(-historyLimit).map(item => ({
       role: item.role === 'assistant' ? 'assistant' : 'user',
       content: (item.role === 'assistant' ? cleanAllofyFormatting(item.content) : String(item.content))
         .slice(0, policy.tier === 'free' ? 3500 : 7000),
     })),
-    { role: 'user', content: message },
+    { role: 'user', content: userContent },
   ];
   const mutations = [];
+  const usedImageIndexes = new Set();
   let currentProfile = profile;
   const allowedToolNames = new Set(sessionTools.map(tool => tool.name));
   const callModel = () => createResponse({
@@ -166,11 +195,24 @@ async function runAllofy(uid, profile, message, history, options = {}) {
       } else {
         try {
           if (isActionTool(call.name)) {
-            result = await executeAllofyAction(call.name, args, uid, {
-              userMessage: message,
-              source: normalizeSource(options.source),
-              requestId: call.call_id || call.id,
-            });
+            if (options.blockImageMutations === true) {
+              result = {
+                ok: false,
+                code: 'image_confirmation_required',
+                error: 'Antes de lançar vários itens de uma imagem, mostre o que foi encontrado e peça confirmação explícita do usuário.',
+              };
+            } else {
+              const imageImport = ['create_transaction', 'create_card_purchase'].includes(call.name)
+                ? matchImageItem(imageContext, args, usedImageIndexes, call.name)
+                : null;
+              result = await executeAllofyAction(call.name, args, uid, {
+                userMessage: message,
+                source: normalizeSource(options.source || (imageContext ? 'image' : 'text')),
+                requestId: call.call_id || call.id,
+                imageImport,
+                imageBatchContext: imageContext,
+              });
+            }
             if (result?.mutated) {
               mutations.push({
                 action: result.action, actionId: result.actionId, summary: result.summary,
@@ -194,16 +236,39 @@ async function runAllofy(uid, profile, message, history, options = {}) {
 }
 
 async function handleAllofyChat(req, res) {
-  const message = String(req.body?.message || '').trim();
-  if (!message) return res.status(400).json({ error: 'Escreva uma mensagem para o Allofy.' });
+  let message = String(req.body?.message || '').trim();
+  const hasImage = Boolean(req.file);
+  if (!message && !hasImage) return res.status(400).json({ error: 'Escreva uma mensagem ou anexe uma imagem para o Allofy.' });
+  if (!message && hasImage) message = 'Analise esta imagem e me diga o que encontrou. Se houver vários lançamentos financeiros, organize-os e peça minha confirmação antes de registrar.';
   if (message.length > 4000) return res.status(400).json({ error: 'A mensagem está muito longa.' });
   try {
     const uid = req.userIdentity.uid;
-    const policy = policyForProfile(req.userData || {});
-    const usage = await consumeCommand(uid, req.userData || {});
+    const profile = req.userData || {};
+    const policy = policyForProfile(profile);
+    const usage = await consumeChatRequest(uid, profile, { withImage: hasImage });
+
+    let imageContext = null;
+    let imageWasJustUploaded = false;
+    if (hasImage) {
+      imageContext = await analyzeAllofyImage(uid, profile, req.file, message);
+      imageWasJustUploaded = true;
+    } else if (referencesRecentImage(message)) {
+      imageContext = await loadRecentImageContext(uid);
+    }
+
     const history = await loadHistory(uid, policy.tier === 'free' ? 8 : 18);
-    await saveMessage(uid, 'user', message);
-    const result = await runAllofy(uid, req.userData, message, history, { source: req.body?.source });
+    const historyMessage = hasImage
+      ? `${message}\n[Imagem analisada: ${String(req.file.originalname || 'imagem').slice(0, 100)} — o arquivo bruto não foi armazenado.]`
+      : message;
+    await saveMessage(uid, 'user', historyMessage);
+
+    const multipleFinancialItems = imageWasJustUploaded && Number(imageContext?.financialItemCount || 0) > 1;
+    const result = await runAllofy(uid, profile, message, history, {
+      source: hasImage ? 'image' : req.body?.source,
+      imageContext,
+      imageWasJustUploaded,
+      blockImageMutations: multipleFinancialItems,
+    });
     const finalReply = result.reply || 'Não consegui montar uma resposta agora. Tente reformular a pergunta.';
     await saveMessage(uid, 'assistant', finalReply);
     res.json({
@@ -212,13 +277,19 @@ async function handleAllofyChat(req, res) {
       usage,
       tier: policy.tier,
       remaining: usage.commands.remaining,
+      image: hasImage ? {
+        analyzed: true,
+        documentType: imageContext?.documentType || 'imagem',
+        financialItemCount: imageContext?.financialItemCount || 0,
+        needsUserReview: imageContext?.needsUserReview === true,
+      } : null,
     });
   } catch (error) {
     logger.error(`Allofy chat error: ${error.message}`);
-    const status = error.status === 429 ? 429 : error.status === 403 ? 403 : error.code === 'openai_not_configured' ? 503 : 500;
+    const status = error.status === 429 ? 429 : error.status === 403 ? 403 : error.status === 400 ? 400 : error.code === 'openai_not_configured' ? 503 : 500;
     res.status(status).json({
       error: status === 503 ? 'O Allofy ainda não foi configurado no servidor.' :
-        status === 429 ? error.message : 'O Allofy não conseguiu responder agora. Tente novamente.',
+        status === 429 ? error.message : status === 400 ? error.message : 'O Allofy não conseguiu responder agora. Tente novamente.',
       code: error.code || 'allofy_error',
       usage: error.usage || null,
     });
@@ -242,6 +313,7 @@ async function clearAllofyHistory(req, res) {
       snap = await ref.limit(400).get();
       if (!snap.empty) { const batch = getDb().batch(); snap.docs.forEach(doc => batch.delete(doc.ref)); await batch.commit(); }
     } while (!snap.empty);
+    await clearImageContext(req.userIdentity.uid);
     res.json({ ok: true });
   } catch (error) {
     logger.error(`Allofy clear error: ${error.message}`);
