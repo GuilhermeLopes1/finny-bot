@@ -76,6 +76,27 @@ app.use(morgan('combined', { stream: { write: (msg) => logger.info(msg.trim()) }
 const multer = require('multer');
 const upload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 10 * 1024 * 1024 } });
 const voiceUpload = multer({ storage: multer.memoryStorage(), limits: { fileSize: 15 * 1024 * 1024, files: 1 } });
+const allofyImageUpload = multer({
+  storage: multer.memoryStorage(),
+  limits: { fileSize: 6 * 1024 * 1024, files: 1 },
+  fileFilter: (_req, file, callback) => {
+    const allowed = ['image/png', 'image/jpeg', 'image/webp'].includes(String(file.mimetype || '').toLowerCase());
+    if (!allowed) {
+      const error = new Error('Use uma imagem PNG, JPG/JPEG ou WEBP.');
+      error.status = 400;
+      error.code = 'unsupported_image_type';
+      return callback(error);
+    }
+    return callback(null, true);
+  },
+});
+function handleAllofyImageUpload(req, res, next) {
+  allofyImageUpload.single('image')(req, res, error => {
+    if (!error) return next();
+    if (error.code === 'LIMIT_FILE_SIZE') return res.status(400).json({ error: 'A imagem pode ter no máximo 6 MB.', code: 'image_too_large' });
+    return res.status(400).json({ error: error.message || 'Imagem inválida.', code: error.code || 'invalid_image' });
+  });
+}
 
 const requireAiUser = requireFirebaseUser({ requirePro: true });
 const ALLOFY_DATA_KEYS = [
@@ -542,7 +563,7 @@ app.post('/admin/users/:uid/action',requireAdminRequest,async(req,res)=>{
  */
 app.get('/health', handleHealthCheck);
 const allofyRequestLimiter = requestLimiter({ windowMs: 60_000, max: Number(process.env.ALLOFY_MINUTE_LIMIT || 30) });
-app.post('/allofy-chat', requireAllofyUser, allofyRequestLimiter, handleAllofyChat);
+app.post('/allofy-chat', requireAllofyUser, allofyRequestLimiter, handleAllofyImageUpload, handleAllofyChat);
 app.post('/allofy-transcribe', requireAllofyUser, requestLimiter({ windowMs: 60_000, max: 15 }), voiceUpload.single('audio'), transcribeAllofyAudio);
 app.post('/allofy-realtime/connect', requireAllofyPro, requestLimiter({ windowMs: 60_000, max: 10 }), createRealtimeCall);
 app.post('/allofy-realtime/end', requireAllofyPro, requestLimiter({ windowMs: 60_000, max: 20 }), handleFinishLive);
